@@ -1,0 +1,23 @@
+{
+  "id": "docwen",
+  "name": "DocWen",
+  "description": "Local document converter (DocWenCLI wrapper) for OpenClaw tools.",
+  "version": "0.1.0",
+  "skills": ["skills/docwen"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "binaryPath": { "type": "string" },
+      "lang": { "type": "string" },
+      "allowDownload": { "type": "boolean", "default": true },
+      "releaseRepo": { "type": "string", "default": "ZHYX91/docwen" },
+      "releaseTag": { "type": "string" },
+      "windowsAsset": { "type": "string", "default": "DocWenCLI-win-x64.zip" },
+      "linuxAsset": { "type": "string", "default": "DocWenCLI-linux-x64.tar.gz" },
+      "checksumsAsset": { "type": "string", "default": "SHA256SUMS.txt" },
+      "installDir": { "type": "string" },
+      "downloadTimeoutMs": { "type": "number", "default": 180000 }
+    }
+  }
+}

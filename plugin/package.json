@@ -1,0 +1,33 @@
+{
+  "name": "@zhyx91/openclaw-docwen",
+  "version": "0.1.0",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "openclaw-config.example.json5",
+    "skills"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.40",
+    "adm-zip": "^0.5.16",
+    "tar": "^7.5.0"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^25.4.0",
+    "typescript": "^5.7.3"
+  }
+}
