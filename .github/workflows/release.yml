@@ -1,0 +1,367 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable x.y.z version to preflight before creating its tag
+        required: true
+        type: string
+  push:
+    tags:
+      - "[0-9]*.[0-9]*.[0-9]*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  PUBLICATION_ARTIFACT_NAME: openclaw-docwen-publication-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  build-release:
+    name: Clean release build ${{ matrix.replica }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [a, b]
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install exact npm
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_manager="$(node -p 'require("./package.json").packageManager')"
+          [[ "$package_manager" =~ ^npm@[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          npm install --global "$package_manager"
+          test "$(npm --version)" = "${package_manager#npm@}"
+      - name: Verify numeric version and source identity
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$RELEASE_VERSION" = "$(node -p 'require("./package.json").version')"
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            test "$GITHUB_SHA" = "$(git rev-parse "origin/$DEFAULT_BRANCH")"
+            if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_VERSION" >/dev/null 2>&1; then
+              echo "preflight requires an unused numeric tag" >&2
+              exit 2
+            fi
+          else
+            test "$GITHUB_REF" = "refs/tags/$RELEASE_VERSION"
+            git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"
+          fi
+      - name: Install exact lockfile and run the full gate
+        run: |
+          npm ci
+          npm run check
+      - name: Build and verify the deterministic release candidate
+        run: npm run release:build -- "$RUNNER_TEMP/release"
+      - name: Upload clean-build evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: openclaw-docwen-build-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.replica }}
+          path: ${{ runner.temp }}/release/
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 1
+
+  resolve-docwen:
+    name: Resolve one immutable DocWen Core release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      artifact_id: ${{ steps.pin.outputs.artifact-id }}
+      artifact_digest: ${{ steps.pin.outputs.artifact-digest }}
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .node-version
+      - name: Resolve both platform assets from one immutable numeric release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/fetch-docwen-release.mjs resolve "${{ runner.temp }}/docwen-core-pin"
+      - name: Upload the sole pinned dependency record
+        id: pin
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: openclaw-docwen-core-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/docwen-core-pin/DOCWEN-CORE.json
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 1
+
+  packaged-docwen:
+    name: Immutable DocWen package on ${{ matrix.platform }}
+    needs: resolve-docwen
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+          - platform: linux
+            os: ubuntu-24.04
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install exact npm and lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_manager="$(node -p 'require("./package.json").packageManager')"
+          [[ "$package_manager" =~ ^npm@[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          npm install --global "$package_manager"
+          npm ci
+      - name: Download the exact current-run DocWen dependency record
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.resolve-docwen.outputs.artifact_id }}
+          path: ${{ runner.temp }}/docwen-core-pin
+      - name: Download the pinned immutable numeric DocWen 0.9 package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/fetch-docwen-release.mjs fetch ${{ matrix.platform }} "${{ runner.temp }}/docwen-core" "${{ runner.temp }}/docwen-core-pin/DOCWEN-CORE.json"
+      - name: Run packaged Machine acceptance on Ubuntu
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          record="$RUNNER_TEMP/docwen-core/docwen-release.json"
+          archive="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).asset.path' "$record")"
+          mkdir "$RUNNER_TEMP/docwen-extracted"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/docwen-extracted" --no-same-owner
+          binary="$(find "$RUNNER_TEMP/docwen-extracted" -type f -name DocWenCLI -print -quit)"
+          test -n "$binary"
+          chmod +x "$binary"
+          export DOCWEN_TEST_BINARY="$binary"
+          export DOCWEN_TEST_SHA256="$(sha256sum -- "$binary" | cut -d ' ' -f 1)"
+          export DOCWEN_TEST_SIZE_BYTES="$(stat -c '%s' -- "$binary")"
+          export DOCWEN_TEST_VERSION="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version' "$record")"
+          npm run acceptance:docwen-package
+      - name: Run packaged Machine acceptance on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $record = Get-Content -Raw "$env:RUNNER_TEMP/docwen-core/docwen-release.json" | ConvertFrom-Json
+          $extract = "$env:RUNNER_TEMP/docwen-extracted"
+          Expand-Archive -LiteralPath $record.asset.path -DestinationPath $extract
+          $binary = Get-ChildItem -LiteralPath $extract -Recurse -File -Filter "DocWenCLI.exe" | Select-Object -First 1
+          if ($null -eq $binary) { throw "DocWenCLI.exe missing from immutable package" }
+          $env:DOCWEN_TEST_BINARY = $binary.FullName
+          $env:DOCWEN_TEST_SHA256 = (Get-FileHash -LiteralPath $binary.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $env:DOCWEN_TEST_SIZE_BYTES = [string]$binary.Length
+          $env:DOCWEN_TEST_VERSION = $record.version
+          npm run acceptance:docwen-package
+
+  verify-release:
+    needs: [build-release, resolve-docwen, packaged-docwen]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.publication.outputs.artifact-id }}
+      artifact_digest: ${{ steps.publication.outputs.artifact-digest }}
+    steps:
+      - name: Download build A
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: openclaw-docwen-build-${{ github.run_id }}-${{ github.run_attempt }}-a
+          path: builds/a
+      - name: Download build B
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: openclaw-docwen-build-${{ github.run_id }}-${{ github.run_attempt }}-b
+          path: builds/b
+      - name: Download the exact current-run DocWen dependency record
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.resolve-docwen.outputs.artifact_id }}
+          path: dependency
+      - name: Compare independent clean builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmp "builds/a/openclaw-docwen-${RELEASE_VERSION}.tgz" "builds/b/openclaw-docwen-${RELEASE_VERSION}.tgz"
+          cmp builds/a/SHA256SUMS builds/b/SHA256SUMS
+          (cd builds/a && sha256sum --check SHA256SUMS)
+          mkdir publication
+          cp "builds/a/openclaw-docwen-${RELEASE_VERSION}.tgz" publication/
+          cp dependency/DOCWEN-CORE.json publication/
+          (
+            cd publication
+            sha256sum DOCWEN-CORE.json "openclaw-docwen-${RELEASE_VERSION}.tgz" > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+      - name: Upload the sole current-run publication artifact
+        if: github.event_name == 'push'
+        id: publication
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ env.PUBLICATION_ARTIFACT_NAME }}
+          path: publication/
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 1
+      - name: Preflight completed without publishing
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "Release preflight passed for ${RELEASE_VERSION}; no tag or Release was created."
+
+  publish:
+    if: github.event_name == 'push'
+    needs: verify-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Download the exact current-run publication artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.verify-release.outputs.artifact_id }}
+          path: publication
+      - name: Verify fixed assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(printf '%s\n' DOCWEN-CORE.json SHA256SUMS "openclaw-docwen-${RELEASE_VERSION}.tgz")"
+          observed="$(find publication -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
+          test "$observed" = "$expected"
+          (cd publication && sha256sum --check SHA256SUMS)
+      - name: Fail closed or select an exact immutable no-op
+        id: release_state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_status="$(curl --silent --show-error --location --output /tmp/release.json --write-out '%{http_code}' \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2026-03-10" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_VERSION")"
+          case "$release_status" in
+            200)
+              jq --exit-status --arg version "$RELEASE_VERSION" \
+                '.tag_name == $version and .draft == false and .prerelease == false and .immutable == true and ((.published_at | type) == "string") and ((.published_at | length) > 0)' \
+                /tmp/release.json >/dev/null
+              mkdir existing
+              gh release download "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir existing
+              expected="$(find publication -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
+              observed="$(find existing -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
+              test "$observed" = "$expected"
+              for asset in publication/*; do
+                cmp "$asset" "existing/$(basename "$asset")"
+                gh attestation verify "existing/$(basename "$asset")" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
+              done
+              echo "decision=noop" >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo "decision=create" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "GitHub Release lookup failed with HTTP $release_status" >&2
+              exit 1
+              ;;
+          esac
+      - name: Attest exact assets
+        if: steps.release_state.outputs.decision == 'create'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: publication/*
+      - name: Create the immutable Release
+        if: steps.release_state.outputs.decision == 'create'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_release_tag() {
+            local direct="" peeled="" sha ref
+            while read -r sha ref; do
+              case "$ref" in
+                "refs/tags/$RELEASE_VERSION") direct="$sha" ;;
+                "refs/tags/$RELEASE_VERSION^{}") peeled="$sha" ;;
+                *) return 1 ;;
+              esac
+            done < <(git ls-remote --exit-code "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "refs/tags/$RELEASE_VERSION" "refs/tags/$RELEASE_VERSION^{}")
+            test -n "$direct"
+            test "${peeled:-$direct}" = "$GITHUB_SHA"
+          }
+          verify_release_tag
+          gh release create "$RELEASE_VERSION" publication/* --repo "$GITHUB_REPOSITORY" --verify-tag --title "$RELEASE_VERSION" --generate-notes
+          verify_release_tag
+      - name: Final immutable Release and byte readback
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 10); do
+            if gh release view "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --json isImmutable >/tmp/final.json 2>/dev/null && [[ "$(jq -r '.isImmutable' /tmp/final.json)" == "true" ]]; then
+              break
+            fi
+            test "$attempt" -lt 10
+            sleep 3
+          done
+          mkdir readback
+          gh release download "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir readback
+          for asset in publication/*; do
+            name="$(basename "$asset")"
+            cmp "$asset" "readback/$name"
+            gh attestation verify "readback/$name" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
+          done
+          verify_release_tag() {
+            local direct="" peeled="" sha ref
+            while read -r sha ref; do
+              case "$ref" in
+                "refs/tags/$RELEASE_VERSION") direct="$sha" ;;
+                "refs/tags/$RELEASE_VERSION^{}") peeled="$sha" ;;
+                *) return 1 ;;
+              esac
+            done < <(git ls-remote --exit-code "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "refs/tags/$RELEASE_VERSION" "refs/tags/$RELEASE_VERSION^{}")
+            test -n "$direct"
+            test "${peeled:-$direct}" = "$GITHUB_SHA"
+          }
+          verify_release_tag

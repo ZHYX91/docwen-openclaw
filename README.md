@@ -1,0 +1,89 @@
+# DocWen for OpenClaw
+
+Typed OpenClaw tools for DocWen Machine Protocol v1 and verified `docwen.artifact_bundle.v2` output graphs.
+
+> This source checkout targets 2.0.0. No 2.0.0 Release is published yet.
+
+## Boundary
+
+- DocWen remains an independently installed product. The plugin never downloads, installs, upgrades, or replaces it.
+- Every call uses JSON-RPC 2.0 over Content-Length framed stdio. No DocWen argv, route ID, or legacy CLI JSON envelope enters a tool result.
+- Every Machine input has an explicit `kind`, `role`, and case-sensitive relative POSIX `logical_path`. The plugin never guesses document-relative resources from physical paths, the current directory, or disk siblings.
+- The 2.0 Gateway hosts are Windows x64 and Ubuntu 24.04 x64. `binaryPath` must be an explicit absolute path to `DocWenCLI.exe` on Windows or the executable `DocWenCLI` on Linux. Release preflight runs the packaged Machine round trip against the exact immutable DocWen 0.9 package on both platforms.
+- The DocWen child receives a bounded environment. It preserves only the Core isolation hooks `DOCWEN_CONFIG_DIR`, `DOCWEN_LOG_DIR`, and a truthy `DOCWEN_LOG_TO_TEMP`; no other ambient `DOCWEN_*`, credential, or user-home variable is forwarded.
+- Accepted Artifact Bundles are limited to 256 artifacts, 512 MiB per artifact, and 1 GiB in aggregate. Artifact SHA-256 verification is streamed and fails closed if a file changes while being read.
+- Read operations do not retain converter artifacts. Persistent writes are optional and require an OpenClaw allow policy.
+- Every persistent write except explicit Markdown in-place numbering commits a complete, integrity-checked Artifact Bundle to an explicit directory.
+
+## Tools
+
+Read tools:
+
+- `docwen_info`
+- `docwen_inspect`
+- `docwen_resources`
+- `docwen_validate_markdown`
+
+Optional write tools:
+
+- `docwen_convert`
+- `docwen_number_markdown`
+- `docwen_merge_pdfs`
+- `docwen_split_pdf`
+- `docwen_merge_tables`
+- `docwen_merge_images_to_tiff`
+
+The write tools use `outputDir` as the transaction target. If it already exists, the call fails unless the caller explicitly sets `overwrite=true`. A sibling no-clobber lock rejects concurrent writers, the destination identity is rechecked immediately before the swap, and every copied artifact is revalidated. The committed directory preserves every Bundle locator and includes `.docwen-artifact-bundle.json`.
+
+`docwen_convert`, `docwen_merge_pdfs`, `docwen_merge_tables`, and `docwen_merge_images_to_tiff` accept typed `inputs` rather than path lists. Each item contains `{ file, kind, role, logicalPath }`. `logicalPath` is a unique, normalized relative POSIX key in the request virtual root; it is not derived from `file`. For example, a Markdown source at `doc/report.md` can reference the explicitly supplied linked PNG at `doc/assets/chart.png` even when their physical files are in unrelated directories.
+
+The `convert.markdown.to_docx` Machine capability is intentionally different from ordinary source-based conversions: it accepts exactly one `neutral_document` document and one `numbering_export_plan` resource. These roles bind JSON files to `application/vnd.docwen.resolved-document+json` and `application/vnd.docwen.numbering-export-plan+json`; `source`, `linked_resource`, bibliography, citation-style, or additional inputs are rejected for this capability.
+
+`docwen_number_markdown` is the sole exception: it requires exactly one of an `outputDir` or `inPlace=true`. In-place replacement is performed only after the returned artifact has passed path, graph, size, and SHA-256 validation.
+
+## Local development
+
+```bash
+npm ci
+npm run check
+npx openclaw plugins validate --root . --entry ./dist/index.js
+```
+
+Use `openclaw-config.example.json5` as the configuration shape.
+
+Final packaged-D2 acceptance uses `npm run acceptance:docwen-package`. It requires the exact extracted `DocWenCLI` path plus its SHA-256, byte size, and stable 0.9.x version through `DOCWEN_TEST_BINARY`, `DOCWEN_TEST_SHA256`, `DOCWEN_TEST_SIZE_BYTES`, and `DOCWEN_TEST_VERSION`; the wrapper revalidates the candidate before and after the real Machine round trip.
+
+## Release asset
+
+Maintainers create the 2.0.0 candidate in an explicit directory outside the repository; the command performs two isolated clean builds and actual `npm pack` runs, rejects non-identical tarballs, verifies the complete archive, and writes a stable checksum manifest.
+
+```bash
+npm run release:build -- /absolute/path/to/new-output-directory
+```
+
+The local command creates exactly these release-build outputs:
+
+- `openclaw-docwen-2.0.0.tgz`
+- `SHA256SUMS`
+
+The immutable GitHub Release additionally publishes `DOCWEN-CORE.json`. That canonical record pins
+one DocWen 0.9.x tag and the exact Linux and Windows asset identities, sizes, and SHA-256 digests used
+by both packaged acceptance jobs. The published `SHA256SUMS` covers both the plugin tarball and this
+dependency record.
+
+After obtaining that exact tarball, install it with OpenClaw:
+
+```bash
+openclaw plugins install ./openclaw-docwen-2.0.0.tgz
+```
+
+## Package structure
+
+- `src/plugin.ts`: thin OpenClaw plugin composition.
+- `src/config.ts`: strict plugin configuration schema.
+- `src/tools/`: tool catalog and parameter schemas.
+- `src/docwen/machine-framing.ts`: canonical Content-Length framing.
+- `src/docwen/machine-client.ts`: Machine v1 lifecycle, cancellation, and strict Bundle validation.
+- `src/docwen/client.ts`: capability selection plus consumer-owned transactional commits.
+- `src/process/runner.ts`: process-tree termination for cancellation and failure containment.
+- `skills/docwen/SKILL.md`: model-facing usage and safety rules.

@@ -1,0 +1,28 @@
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.webp -text
+*.bmp -text
+*.ico -text
+*.pdf -text
+*.zip -text
+*.7z -text
+*.exe -text
+*.dll -text
+*.pyd -text
+*.so -text
+*.dylib -text
+*.woff -text
+*.woff2 -text
+*.ttf -text
+*.otf -text
+*.eot -text
+*.docx -text
+*.xlsx -text
+*.pptx -text

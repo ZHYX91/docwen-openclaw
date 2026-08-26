@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: DocWen core issues
+    url: https://github.com/ZHYX91/docwen/issues
+    about: Report CLI, conversion, OCR, proofreading, or packaging problems that reproduce outside OpenClaw.
+  - name: Security policy
+    url: https://github.com/ZHYX91/docwen-openclaw/security/policy
+    about: Do not disclose vulnerabilities, Gateway configuration, or private file data publicly.

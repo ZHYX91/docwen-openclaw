@@ -1,0 +1,131 @@
+{
+  "id": "docwen",
+  "name": "DocWen",
+  "description": "Operate DocWen through Machine Protocol v1 and verified Artifact Bundles.",
+  "version": "2.0.0",
+  "skills": ["skills/docwen"],
+  "activation": {
+    "onStartup": false
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "binaryPath": {
+        "type": "string",
+        "minLength": 1
+      },
+      "language": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "auto"
+          },
+          {
+            "type": "string",
+            "const": "zh_CN"
+          },
+          {
+            "type": "string",
+            "const": "zh_TW"
+          },
+          {
+            "type": "string",
+            "const": "en_US"
+          },
+          {
+            "type": "string",
+            "const": "ja_JP"
+          },
+          {
+            "type": "string",
+            "const": "ko_KR"
+          },
+          {
+            "type": "string",
+            "const": "fr_FR"
+          },
+          {
+            "type": "string",
+            "const": "de_DE"
+          },
+          {
+            "type": "string",
+            "const": "es_ES"
+          },
+          {
+            "type": "string",
+            "const": "pt_BR"
+          },
+          {
+            "type": "string",
+            "const": "ru_RU"
+          },
+          {
+            "type": "string",
+            "const": "vi_VN"
+          }
+        ],
+        "default": "auto"
+      },
+      "readTimeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 1800000,
+        "default": 30000
+      },
+      "writeTimeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 1800000,
+        "default": 600000
+      }
+    },
+    "additionalProperties": false
+  },
+  "contracts": {
+    "tools": [
+      "docwen_info",
+      "docwen_inspect",
+      "docwen_resources",
+      "docwen_validate_markdown",
+      "docwen_convert",
+      "docwen_number_markdown",
+      "docwen_merge_pdfs",
+      "docwen_split_pdf",
+      "docwen_merge_tables",
+      "docwen_merge_images_to_tiff"
+    ]
+  },
+  "toolMetadata": {
+    "docwen_info": {
+      "replaySafe": true
+    },
+    "docwen_inspect": {
+      "replaySafe": true
+    },
+    "docwen_resources": {
+      "replaySafe": true
+    },
+    "docwen_validate_markdown": {
+      "replaySafe": true
+    },
+    "docwen_convert": {
+      "optional": true
+    },
+    "docwen_number_markdown": {
+      "optional": true
+    },
+    "docwen_merge_pdfs": {
+      "optional": true
+    },
+    "docwen_split_pdf": {
+      "optional": true
+    },
+    "docwen_merge_tables": {
+      "optional": true
+    },
+    "docwen_merge_images_to_tiff": {
+      "optional": true
+    }
+  }
+}
