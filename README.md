@@ -2,7 +2,7 @@
 
 Typed OpenClaw tools for DocWen Machine Protocol v1 and verified `docwen.artifact_bundle.v2` output graphs.
 
-> This source checkout targets 2.0.0. No 2.0.0 Release is published yet.
+> Version 2.0.0 is published as an [immutable GitHub Release](https://github.com/ZHYX91/docwen-openclaw/releases/tag/2.0.0).
 
 ## Boundary
 
@@ -70,6 +70,9 @@ The immutable GitHub Release additionally publishes `DOCWEN-CORE.json`. That can
 one DocWen 0.9.x tag and the exact Linux and Windows asset identities, sizes, and SHA-256 digests used
 by both packaged acceptance jobs. The published `SHA256SUMS` covers both the plugin tarball and this
 dependency record.
+
+Publication requires GitHub Immutable Releases and an active repository ruleset that prevents updates or
+deletion of numeric `x.y.z` tags. Final release state is read back through the REST `immutable: true` field.
 
 After obtaining that exact tarball, install it with OpenClaw:
 

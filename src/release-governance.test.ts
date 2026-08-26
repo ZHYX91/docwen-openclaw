@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 describe("release governance", () => {
   it("uses numeric product tags and versioned assets without a v prefix", () => {
     const workflow = readFileSync(".github/workflows/release.yml", "utf8");
+    const ciWorkflow = readFileSync(".github/workflows/ci.yml", "utf8");
     const releaseLibrary = readFileSync("scripts/release-package-lib.mjs", "utf8");
     const readme = readFileSync("README.md", "utf8");
 
@@ -13,6 +14,7 @@ describe("release governance", () => {
     expect(releaseLibrary).toContain('RELEASE_TARBALL_FILENAME = "openclaw-docwen-2.0.0.tgz"');
     expect(releaseLibrary).not.toContain("openclaw-docwen-v2.0.0");
     expect(readme).not.toContain("openclaw-docwen-v2.0.0");
+    expect(ciWorkflow).toContain("workflow_dispatch:");
   });
 
   it("keeps preflight read-only and publishes only from an exact immutable boundary", () => {
@@ -39,7 +41,9 @@ describe("release governance", () => {
     expect(workflow).not.toContain("$record.asset.bytes");
     expect(workflow).toContain("artifact-ids: ${{ needs.verify-release.outputs.artifact_id }}");
     expect(publish).toContain("if: github.event_name == 'push'");
-    expect(publish).toContain("isImmutable");
+    expect(publish).not.toContain("isImmutable");
+    expect(publish).toContain(".immutable == true");
+    expect(publish).toContain("/releases/tags/$RELEASE_VERSION");
     expect(publish).toContain('case "$release_status" in');
     expect(publish).toContain("404)");
     expect(publish).toContain("git ls-remote --exit-code");

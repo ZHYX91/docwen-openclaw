@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-## 2.0.0
+- Changed post-publication verification to use GitHub's REST `immutable: true` field instead of the removed GraphQL field and added a manual CI recovery trigger.
+
+## 2.0.0 - 2026-08-26
 
 - Replaced CLI argument adapters with DocWen Machine Protocol v1 over framed stdio.
 - Added strict capability discovery, task lifecycle, cancellation, and Artifact Bundle v2 validation.
