@@ -12,8 +12,9 @@ Use the registered `docwen_*` tools. Never construct a shell command for DocWen.
 
 1. Call `docwen_info` to verify Machine Protocol v1, Artifact Bundle v2, capability availability, and health.
 2. Use `docwen_inspect` before choosing an operation for an unfamiliar input.
-3. Use `docwen_resources` when a format, template, or numbering scheme must be selected.
-4. `docwen_validate_markdown` is read-only: it returns the structured report and removes its request-owned staging area.
+3. Use `docwen_resources` when a format, template, optimization, or numbering scheme must be selected.
+4. When a template is required, call `docwen_resources` with `kind="templates"` and pass the returned canonical resource `id` to `docwen_convert.template`. Never pass a file path or display name.
+5. `docwen_validate_markdown` is read-only: it returns the structured report and removes its request-owned staging area.
 
 ## Write safety
 
@@ -43,6 +44,8 @@ Before calling a write tool:
 ## Artifact semantics
 
 The Bundle's `document`, `fragment`, and `resource` kinds and its relations describe output semantics. They do not authorize another product's page, node, or workspace structure. Preserve the complete committed Bundle directory unless the user explicitly requests a later import or cleanup operation.
+
+A DocWen template is a resource identity, not a host path. Treat `origin`, `is_default`, and other template metadata returned by newer DocWen builds as descriptive facts; the canonical `id` remains the only value sent back in conversion requests.
 
 ## Availability
 
