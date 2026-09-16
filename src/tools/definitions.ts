@@ -25,8 +25,7 @@ const logicalPathValue = () =>
 const templateIdValue = () =>
   Type.String({
     minLength: 1,
-    description:
-      "Canonical DocWen template resource ID returned by docwen_resources(kind=\"templates\"); never a file path or display name.",
+    description: "Canonical DocWen template ID returned by docwen_resources; never a path or display name.",
   });
 const typedInputValue = () =>
   Type.Union([
