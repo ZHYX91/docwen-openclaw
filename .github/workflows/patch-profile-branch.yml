@@ -1,0 +1,35 @@
+name: patch profile branch
+
+on:
+  push:
+    branches:
+      - fix/docwen-contract-template-id-and-profile
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: fix/docwen-contract-template-id-and-profile
+      - name: Preserve the complete explicit DocWen profile
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('src/docwen/machine-client.ts')
+          text = path.read_text()
+          old = 'for (const key of ["DOCWEN_CONFIG_DIR", "DOCWEN_LOG_DIR"] as const) {'
+          new = 'for (const key of ["DOCWEN_CONFIG_DIR", "DOCWEN_DATA_DIR", "DOCWEN_LOG_DIR"] as const) {'
+          if old not in text:
+              raise SystemExit('bounded environment anchor not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/docwen/machine-client.ts
+          git commit -m "fix: preserve explicit DocWen data profiles"
+          git push origin HEAD:fix/docwen-contract-template-id-and-profile
