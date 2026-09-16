@@ -824,7 +824,7 @@ function boundedEnvironment(locale?: string): NodeJS.ProcessEnv {
   const bootstrapKeys = ["SystemRoot", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "TEMP", "TMP"];
   const env: NodeJS.ProcessEnv = {};
   for (const key of bootstrapKeys) if (process.env[key]) env[key] = process.env[key];
-  for (const key of ["DOCWEN_CONFIG_DIR", "DOCWEN_LOG_DIR"] as const) {
+  for (const key of ["DOCWEN_CONFIG_DIR", "DOCWEN_DATA_DIR", "DOCWEN_LOG_DIR"] as const) {
     const value = process.env[key]?.trim();
     if (value && !value.includes("\u0000")) env[key] = value;
   }
