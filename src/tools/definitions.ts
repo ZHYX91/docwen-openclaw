@@ -22,6 +22,12 @@ const logicalPathValue = () =>
     description:
       "Case-sensitive relative POSIX path in this request's virtual root; never inferred from disk.",
   });
+const templateIdValue = () =>
+  Type.String({
+    minLength: 1,
+    description:
+      "Canonical DocWen template resource ID returned by docwen_resources(kind=\"templates\"); never a file path or display name.",
+  });
 const typedInputValue = () =>
   Type.Union([
     Type.Object(
@@ -120,7 +126,7 @@ export function defineDocWenTools(tool: DefineTool): DefinedTool[] {
           to: Type.String({ minLength: 1 }),
           outputDir: outputDirectoryValue(),
           overwrite: overwriteValue(),
-          template: Type.Optional(pathValue()),
+          template: Type.Optional(templateIdValue()),
           keepImages: Type.Optional(Type.Boolean()),
           ocr: Type.Optional(Type.Boolean()),
           ocrLanguage: Type.Optional(Type.String({ minLength: 1 })),
