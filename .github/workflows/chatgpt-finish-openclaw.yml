@@ -1,0 +1,374 @@
+name: chatgpt-finish-openclaw
+
+on:
+  push:
+    branches: [fix/docwen-contract-template-id-and-profile]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/docwen-contract-template-id-and-profile
+          fetch-depth: 0
+      - name: Apply coordinated safety fixes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          p = Path('src/docwen/client.ts')
+          s = p.read_text(encoding='utf-8')
+
+          old = '''  const options: JsonObject = {};
+  const template = optionalString(params, "template");
+  if (template) options.template_name = template;
+  const keepImages = optionalBoolean(params, "keepImages");
+  if (keepImages !== undefined) {
+    options.to_md_keep_images = keepImages;
+    options.image_mode = keepImages ? "file" : "omit";
+  }
+  const ocr = optionalBoolean(params, "ocr");
+  if (ocr !== undefined) options.to_md_enable_ocr = ocr;
+  const ocrLanguage = optionalString(params, "ocrLanguage");
+  if (ocrLanguage) options.ocr_language = ocrLanguage;
+'''
+          new = '''  const capability = matches[0]!;
+  const options: JsonObject = {};
+  const template = optionalString(params, "template");
+  if (template) setAdvertisedOption(capability, options, ["template_name"], template, "template");
+  const keepImages = optionalBoolean(params, "keepImages");
+  if (keepImages !== undefined) {
+    setAdvertisedOption(
+      capability,
+      options,
+      ["preserve_resources", "to_md_keep_images"],
+      keepImages,
+      "keepImages",
+    );
+  }
+  const ocr = optionalBoolean(params, "ocr");
+  if (ocr !== undefined) {
+    setAdvertisedOption(
+      capability,
+      options,
+      ["recognize_text", "to_md_enable_ocr"],
+      ocr,
+      "ocr",
+    );
+  }
+  const ocrLanguage = optionalString(params, "ocrLanguage");
+  if (ocrLanguage) setAdvertisedOption(capability, options, ["ocr_language"], ocrLanguage, "ocrLanguage");
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''    preparedInputs,
+  );
+}'''
+          new = '''    preparedInputs,
+    matches[0],
+  );
+}'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''  const execution = await executeTask(
+    binaryPath,
+    "transform.markdown.heading_numbering",
+    [input],
+    options,
+    config,
+    signal,
+    true,
+  );'''
+          new = '''  const preparedInputs = await buildInputHandles([input]);
+  const execution = await executeTask(
+    binaryPath,
+    "transform.markdown.heading_numbering",
+    [input],
+    options,
+    config,
+    signal,
+    true,
+    preparedInputs,
+  );'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''    const committedPath = await atomicReplaceFile(file, preferred.absolutePath, {
+      sizeBytes: preferred.size_bytes,
+      sha256: preferred.sha256,
+    });
+    return taskResult(execution.completed, path.dirname(committedPath), [committedPath], committedPath, true);
+  } finally {
+    await rm(execution.temporaryRoot, { recursive: true, force: true });
+  }'''
+          new = '''    const committed = await atomicReplaceFile(
+      file,
+      preferred.absolutePath,
+      { sizeBytes: preferred.size_bytes, sha256: preferred.sha256 },
+      { sizeBytes: preparedInputs[0]!.size_bytes, sha256: preparedInputs[0]!.sha256 },
+    );
+    return taskResult(
+      execution.completed,
+      path.dirname(committed.path),
+      [committed.path],
+      committed.path,
+      true,
+      committed.warnings,
+    );
+  } finally {
+    await cleanupTemporaryRoot(execution.temporaryRoot);
+  }'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''    const committed = await atomicCommitBundle(execution.completed.bundle, outputDir, overwrite);
+    return taskResult(
+      execution.completed,
+      outputDir,
+      committed.artifactPaths,
+      committed.preferredArtifactPath,
+      false,
+    );
+  } finally {
+    await rm(execution.temporaryRoot, { recursive: true, force: true });
+  }'''
+          new = '''    const committed = await atomicCommitBundle(execution.completed.bundle, outputDir, overwrite);
+    return taskResult(
+      execution.completed,
+      outputDir,
+      committed.artifactPaths,
+      committed.preferredArtifactPath,
+      false,
+      committed.warnings,
+    );
+  } finally {
+    await cleanupTemporaryRoot(execution.temporaryRoot);
+  }'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''  preparedInputs?: MachineInputHandle[],
+): Promise<TaskExecution> {
+  const inputs = preparedInputs ?? (await buildInputHandles(inputSpecs));
+  if (requireAvailable) {
+    const capability = (await discoverCapabilities(binaryPath, config, signal)).find(
+      (item) => item.capability_id === capabilityId,
+    );'''
+          new = '''  preparedInputs?: MachineInputHandle[],
+  preparedCapability?: MachineCapability,
+): Promise<TaskExecution> {
+  const inputs = preparedInputs ?? (await buildInputHandles(inputSpecs));
+  if (requireAvailable) {
+    const capability = preparedCapability ?? (await discoverCapabilities(binaryPath, config, signal)).find(
+      (item) => item.capability_id === capabilityId,
+    );'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''async function atomicCommitBundle(
+  bundle: ValidatedArtifactBundle,
+  destination: string,
+  overwrite: boolean,
+  hooks: CommitTestHooks = {},
+): Promise<{ artifactPaths: string[]; preferredArtifactPath: string }> {'''
+          new = '''async function atomicCommitBundle(
+  bundle: ValidatedArtifactBundle,
+  destination: string,
+  overwrite: boolean,
+  hooks: CommitTestHooks = {},
+): Promise<{ artifactPaths: string[]; preferredArtifactPath: string; warnings: string[] }> {'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''      await rename(transactionRoot, destination);
+      destinationCommitted = true;
+      if (movedExisting) await rm(backup, { recursive: true, force: true });
+      return {
+        artifactPaths,
+        preferredArtifactPath: path.join(destination, ...artifactCommitPath(bundle, preferred).split("/")),
+      };
+    } catch (error) {
+      if (movedExisting) {'''
+          new = '''      await rename(transactionRoot, destination);
+      destinationCommitted = true;
+      const warnings: string[] = [];
+      if (movedExisting) {
+        try {
+          await rm(backup, { recursive: true, force: true });
+        } catch (error) {
+          warnings.push(`Output was published, but the previous-output backup could not be removed: ${errorMessage(error)}`);
+        }
+      }
+      return {
+        artifactPaths,
+        preferredArtifactPath: path.join(destination, ...artifactCommitPath(bundle, preferred).split("/")),
+        warnings,
+      };
+    } catch (error) {
+      if (movedExisting && !destinationCommitted) {'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''async function atomicReplaceFile(
+  destination: string,
+  replacement: string,
+  expected: { sizeBytes: number; sha256: string },
+  hooks: CommitTestHooks = {},
+): Promise<string> {'''
+          new = '''async function atomicReplaceFile(
+  destination: string,
+  replacement: string,
+  expected: { sizeBytes: number; sha256: string },
+  expectedSource?: { sizeBytes: number; sha256: string },
+  hooks: CommitTestHooks = {},
+): Promise<{ path: string; warnings: string[] }> {'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''    const expectedDestination = pathIdentity(existing);
+    const temporary = `${destination}.docwen-replacement-${randomUUID()}`;'''
+          new = '''    const expectedDestination = pathIdentity(existing);
+    if (expectedSource) {
+      await assertCurrentFileMatches(destination, expectedDestination, expectedSource);
+    }
+    const temporary = `${destination}.docwen-replacement-${randomUUID()}`;'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''      await rename(temporary, destination);
+      destinationCommitted = true;
+      await rm(backup, { force: true });
+      return destination;
+    } catch (error) {
+      if (movedExisting) {'''
+          new = '''      await rename(temporary, destination);
+      destinationCommitted = true;
+      const warnings: string[] = [];
+      try {
+        await rm(backup, { force: true });
+      } catch (error) {
+        warnings.push(`File was updated, but the previous-file backup could not be removed: ${errorMessage(error)}`);
+      }
+      return { path: destination, warnings };
+    } catch (error) {
+      if (movedExisting && !destinationCommitted) {'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          marker = '''async function withDestinationLock<T>(destination: string, body: () => Promise<T>): Promise<T> {'''
+          insert = '''async function assertCurrentFileMatches(
+  destination: string,
+  expectedIdentity: PathIdentity,
+  expectedSource: { sizeBytes: number; sha256: string },
+): Promise<void> {
+  if (expectedIdentity.size !== BigInt(expectedSource.sizeBytes)) {
+    throw new DocWenMachineError(
+      "docwen_source_changed",
+      "The source file changed while DocWen was preparing the in-place result; the newer file was not overwritten.",
+    );
+  }
+  const digest = await hashFile(destination);
+  const after = await lstat(destination, { bigint: true });
+  if (!samePathIdentity(after, expectedIdentity) || digest !== expectedSource.sha256) {
+    throw new DocWenMachineError(
+      "docwen_source_changed",
+      "The source file changed while DocWen was preparing the in-place result; the newer file was not overwritten.",
+    );
+  }
+}
+
+async function cleanupTemporaryRoot(temporaryRoot: string): Promise<void> {
+  try {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  } catch {
+    // The business result, if already published, remains authoritative. A
+    // cleanup failure must never turn a successful write into a retryable task
+    // failure that could duplicate or overwrite user data.
+  }
+}
+
+function capabilityOptionProperties(capability: MachineCapability): JsonObject {
+  return requiredObject(capability.options_schema.properties, "capability.options_schema.properties");
+}
+
+function setAdvertisedOption(
+  capability: MachineCapability,
+  options: JsonObject,
+  candidates: readonly string[],
+  value: string | boolean,
+  parameterName: string,
+): void {
+  const properties = capabilityOptionProperties(capability);
+  const option = candidates.find((candidate) => Object.prototype.hasOwnProperty.call(properties, candidate));
+  if (!option) {
+    throw new DocWenMachineError(
+      "docwen_option_unsupported",
+      `The selected DocWen capability does not support ${parameterName}.`,
+    );
+  }
+  options[option] = value;
+}
+
+''' + marker
+          assert marker in s
+          s = s.replace(marker, insert, 1)
+
+          old = '''function taskResult(
+  completed: MachineTaskCompleted,
+  outputRoot: string,
+  artifactPaths: string[],
+  preferredArtifactPath: string,
+  inPlace: boolean,
+): JsonObject {
+  return {
+'''
+          new = '''function taskResult(
+  completed: MachineTaskCompleted,
+  outputRoot: string,
+  artifactPaths: string[],
+  preferredArtifactPath: string,
+  inPlace: boolean,
+  warnings: readonly string[] = [],
+): JsonObject {
+  return {
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''    diagnostics: completed.diagnostics,
+    metrics: completed.metrics,
+  };
+}'''
+          new = '''    diagnostics: completed.diagnostics,
+    metrics: completed.metrics,
+    ...(warnings.length === 0 ? {} : { warnings: [...warnings] }),
+  };
+}'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          marker = '''function isNotFound(error: unknown): boolean {'''
+          insert = '''function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+''' + marker
+          assert marker in s
+          s = s.replace(marker, insert, 1)
+
+          p.write_text(s, encoding='utf-8')
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/docwen/client.ts
+          git diff --cached --check
+          git commit -m "fix: harden OpenClaw task publication and capability options"
+          git push origin HEAD:fix/docwen-contract-template-id-and-profile
