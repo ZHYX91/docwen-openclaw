@@ -39,7 +39,9 @@ Before calling a write tool:
 - do not retry a write automatically after it starts;
 - report the preferred artifact and every committed artifact from the structured result.
 
-`docwen_number_markdown` requires exactly one of an explicit `outputDir` or explicit `inPlace=true`. Never infer in-place modification.
+`docwen_number_markdown` requires exactly one of an explicit `outputDir` or explicit `inPlace=true`. Never infer in-place modification. An in-place operation is bound to the source version read at task start; if the source changes while DocWen is preparing the result, report the conflict and leave the newer file untouched.
+
+A successful result can include non-fatal cleanup warnings after the output has already been committed. Report those warnings, but do not repeat the write: a post-commit cleanup problem does not make the published result disappear or make the operation safe to retry automatically.
 
 ## Artifact semantics
 
