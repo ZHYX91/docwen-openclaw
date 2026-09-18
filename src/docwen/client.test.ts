@@ -291,6 +291,66 @@ describe("OpenClaw Artifact Bundle commit", () => {
   });
 });
 
+describe("capability-driven conversion options", () => {
+  const capability = (properties: Record<string, unknown>) =>
+    clientTesting.parseCapability({
+      capability_id: "convert.test.to_markdown",
+      operation: "convert",
+      input_shape: {
+        slots: [{ role: "source", kind: "document", media_types: ["application/pdf"], min_items: 1, max_items: 1 }],
+        undeclared_roles: "reject",
+      },
+      output_media_types: ["text/markdown"],
+      output_shape: {
+        cardinality: "one",
+        artifact_kinds: ["document"],
+        relation_types: [],
+        atomic_bundle: true,
+      },
+      options_schema: { type: "object", properties, additionalProperties: false },
+      availability: "available",
+      dependencies: [],
+      limitations: [],
+    });
+
+  it("maps semantic OCR and resource preferences to the selected capability contract", () => {
+    const modern = capability({
+      recognize_text: { type: "boolean" },
+      preserve_resources: { type: "boolean" },
+      image_mode: { type: "string", enum: ["file"] },
+      ocr_language: { type: "string" },
+    });
+    expect(
+      clientTesting.buildConversionOptions(modern, {
+        ocr: true,
+        keepImages: false,
+        ocrLanguage: "chi_sim",
+      }),
+    ).toEqual({
+      recognize_text: true,
+      preserve_resources: false,
+      ocr_language: "chi_sim",
+    });
+
+    const legacy = capability({
+      to_md_enable_ocr: { type: "boolean" },
+      to_md_keep_images: { type: "boolean" },
+      image_mode: { type: "string", enum: ["file", "omit"] },
+    });
+    expect(clientTesting.buildConversionOptions(legacy, { ocr: false, keepImages: true })).toEqual({
+      to_md_enable_ocr: false,
+      to_md_keep_images: true,
+      image_mode: "file",
+    });
+  });
+
+  it("rejects an explicitly requested option that the capability does not expose", () => {
+    expect(() => clientTesting.buildConversionOptions(capability({}), { ocr: true })).toThrow(
+      "does not support the requested ocr option",
+    );
+  });
+});
+
 describe("typed Machine input construction", () => {
   it("preserves explicit virtual paths and accepts a linked resource slot", async () => {
     const workspace = await root();
