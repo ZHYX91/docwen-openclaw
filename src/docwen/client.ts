@@ -230,6 +230,7 @@ async function validateMarkdown(
     signal,
     true,
   );
+  const warnings: string[] = [];
   try {
     const preferred = preferredArtifact(execution.completed.bundle);
     if (preferred.media_type !== JSON_MEDIA_TYPE || preferred.size_bytes > MAX_REPORT_BYTES) {
@@ -250,14 +251,17 @@ async function validateMarkdown(
         },
       );
     }
+    await cleanupTaskRoot(execution.temporaryRoot, warnings);
     return {
       capability_id: "validate.markdown",
       report: jsonValue(report),
       diagnostics: execution.completed.diagnostics,
       metrics: execution.completed.metrics,
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
-  } finally {
-    await rm(execution.temporaryRoot, { recursive: true, force: true });
+  } catch (error) {
+    await rm(execution.temporaryRoot, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
   }
 }
 
@@ -578,7 +582,7 @@ async function executeTask(
     });
     return { completed, temporaryRoot };
   } catch (error) {
-    await rm(temporaryRoot, { recursive: true, force: true });
+    await rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
 }
