@@ -269,6 +269,28 @@ describe("OpenClaw Artifact Bundle commit", () => {
     expect((await readdir(workspace)).filter((name) => name.includes(".docwen-"))).toEqual([]);
   });
 
+  it("refuses an in-place replacement when the source changed after task preparation", async () => {
+    const workspace = await root();
+    const destination = path.join(workspace, "document.md");
+    const replacement = path.join(workspace, "replacement.md");
+    await writeFile(destination, "original", "utf8");
+    await writeFile(replacement, "replacement", "utf8");
+    const sourceVersion = expectedContent("original");
+
+    await writeFile(destination, "newer user content", "utf8");
+
+    await expect(
+      clientTesting.atomicReplaceFile(
+        destination,
+        replacement,
+        expectedContent("replacement"),
+        {},
+        sourceVersion,
+      ),
+    ).rejects.toMatchObject({ code: "docwen_source_changed" });
+    expect(await readFile(destination, "utf8")).toBe("newer user content");
+  });
+
   it("detects an in-place target mutation immediately before replacement", async () => {
     const workspace = await root();
     const destination = path.join(workspace, "document.md");
