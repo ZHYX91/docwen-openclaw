@@ -1514,6 +1514,10 @@ function jsonValue(value: unknown): JsonObject | string | number | boolean | nul
   return requiredObject(value, "JSON value");
 }
 
+function isErrno(error: unknown, code: string): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
+}
+
 function isNotFound(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
