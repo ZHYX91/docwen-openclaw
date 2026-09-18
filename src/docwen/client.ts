@@ -984,9 +984,8 @@ async function atomicCommitBundle(
       const preferred = preferredArtifact(bundle);
       let movedExisting = false;
       let destinationCommitted = false;
-      let artifactPaths: string[] = [];
+      const artifactPaths: string[] = [];
       try {
-        artifactPaths = [];
         for (const artifact of bundle.artifacts) {
           const commitPath = artifactCommitPath(bundle, artifact);
           const target = path.join(transactionRoot, ...commitPath.split("/"));
