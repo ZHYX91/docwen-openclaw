@@ -432,6 +432,11 @@ async function numberMarkdown(
       signal,
     );
   }
+  const preparedInputs = await buildInputHandles([input]);
+  const sourceVersion = {
+    sizeBytes: preparedInputs[0]!.size_bytes,
+    sha256: preparedInputs[0]!.sha256,
+  };
   const execution = await executeTask(
     binaryPath,
     "transform.markdown.heading_numbering",
@@ -440,6 +445,7 @@ async function numberMarkdown(
     config,
     signal,
     true,
+    preparedInputs,
   );
   try {
     const preferred = preferredArtifact(execution.completed.bundle);
@@ -449,10 +455,16 @@ async function numberMarkdown(
         "Numbering did not return one preferred Markdown document.",
       );
     }
-    const committedPath = await atomicReplaceFile(file, preferred.absolutePath, {
-      sizeBytes: preferred.size_bytes,
-      sha256: preferred.sha256,
-    });
+    const committedPath = await atomicReplaceFile(
+      file,
+      preferred.absolutePath,
+      {
+        sizeBytes: preferred.size_bytes,
+        sha256: preferred.sha256,
+      },
+      {},
+      sourceVersion,
+    );
     return taskResult(execution.completed, path.dirname(committedPath), [committedPath], committedPath, true);
   } finally {
     await rm(execution.temporaryRoot, { recursive: true, force: true });
@@ -1016,6 +1028,7 @@ async function atomicReplaceFile(
   replacement: string,
   expected: { sizeBytes: number; sha256: string },
   hooks: CommitTestHooks = {},
+  expectedSource?: { sizeBytes: number; sha256: string },
 ): Promise<string> {
   if (!path.isAbsolute(destination))
     throw new DocWenMachineError("docwen_path_not_absolute", "Input path is not absolute.");
@@ -1024,7 +1037,9 @@ async function atomicReplaceFile(
     if (!existing.isFile() || existing.isSymbolicLink()) {
       throw new DocWenMachineError("docwen_input_not_regular_file", "In-place target is not a regular file.");
     }
-    const expectedDestination = pathIdentity(existing);
+    const expectedDestination = expectedSource
+      ? await assertSourceVersionUnchanged(destination, existing, expectedSource)
+      : pathIdentity(existing);
     const temporary = `${destination}.docwen-replacement-${randomUUID()}`;
     const backup = `${destination}.docwen-backup-${randomUUID()}`;
     await copyFile(replacement, temporary, fsConstants.COPYFILE_EXCL);
@@ -1131,6 +1146,28 @@ async function assertPathIdentityUnchanged(destination: string, expected: PathId
   if (!samePathIdentity(current, expected)) {
     throw new DocWenMachineError("docwen_output_changed", "The output target changed during commit.");
   }
+}
+
+async function assertSourceVersionUnchanged(
+  destination: string,
+  before: BigIntStats,
+  expected: { sizeBytes: number; sha256: string },
+): Promise<PathIdentity> {
+  if (before.size !== BigInt(expected.sizeBytes)) {
+    throw new DocWenMachineError(
+      "docwen_source_changed",
+      "The source file changed while DocWen was preparing the in-place result.",
+    );
+  }
+  const digest = await hashFile(destination);
+  const after = await lstat(destination, { bigint: true });
+  if (!samePathIdentity(after, pathIdentity(before)) || digest !== expected.sha256) {
+    throw new DocWenMachineError(
+      "docwen_source_changed",
+      "The source file changed while DocWen was preparing the in-place result.",
+    );
+  }
+  return pathIdentity(after);
 }
 
 async function assertCopiedArtifact(
