@@ -77,6 +77,8 @@ type PathIdentity = Readonly<{
 
 type CommitTestHooks = Readonly<{
   beforeSwap?: () => Promise<void> | void;
+  cleanupBackup?: (backup: string) => Promise<void>;
+  onCleanupWarning?: (message: string) => void;
 }>;
 
 export async function executeDocWenTool(
@@ -953,74 +955,90 @@ async function atomicCommitBundle(
   assertSafeDestination(destination);
   const parent = path.dirname(destination);
   await mkdir(parent, { recursive: true });
-  return withDestinationLock(destination, async () => {
-    const expectedDestination = await preflightOutputDirectory(destination, overwrite);
-    const transactionRoot = await mkdtemp(path.join(parent, `.docwen-${path.basename(destination)}-`));
-    const backup = `${destination}.docwen-backup-${randomUUID()}`;
-    const preferred = preferredArtifact(bundle);
-    let movedExisting = false;
-    let destinationCommitted = false;
-    try {
-      const artifactPaths: string[] = [];
-      for (const artifact of bundle.artifacts) {
-        const commitPath = artifactCommitPath(bundle, artifact);
-        const target = path.join(transactionRoot, ...commitPath.split("/"));
-        await mkdir(path.dirname(target), { recursive: true });
-        await copyFile(artifact.absolutePath, target, fsConstants.COPYFILE_EXCL);
-        await assertCopiedArtifact(target, artifact.size_bytes, artifact.sha256);
-        artifactPaths.push(path.join(destination, ...commitPath.split("/")));
+  return withDestinationLock(
+    destination,
+    async () => {
+      const expectedDestination = await preflightOutputDirectory(destination, overwrite);
+      const transactionRoot = await mkdtemp(path.join(parent, `.docwen-${path.basename(destination)}-`));
+      const backup = `${destination}.docwen-backup-${randomUUID()}`;
+      const preferred = preferredArtifact(bundle);
+      let movedExisting = false;
+      let destinationCommitted = false;
+      let artifactPaths: string[] = [];
+      try {
+        artifactPaths = [];
+        for (const artifact of bundle.artifacts) {
+          const commitPath = artifactCommitPath(bundle, artifact);
+          const target = path.join(transactionRoot, ...commitPath.split("/"));
+          await mkdir(path.dirname(target), { recursive: true });
+          await copyFile(artifact.absolutePath, target, fsConstants.COPYFILE_EXCL);
+          await assertCopiedArtifact(target, artifact.size_bytes, artifact.sha256);
+          artifactPaths.push(path.join(destination, ...commitPath.split("/")));
+        }
+        const manifestPath = path.join(transactionRoot, ".docwen-artifact-bundle.json");
+        if (
+          bundle.artifacts.some(
+            (artifact) => artifactCommitPath(bundle, artifact) === ".docwen-artifact-bundle.json",
+          )
+        ) {
+          throw new DocWenMachineError(
+            "docwen_bundle_locator_reserved",
+            "Bundle uses the consumer manifest locator.",
+          );
+        }
+        await writeFile(manifestPath, `${JSON.stringify(serializableBundle(bundle), null, 2)}\n`, {
+          encoding: "utf8",
+          flag: "wx",
+        });
+        await hooks.beforeSwap?.();
+        if (expectedDestination) {
+          await assertPathIdentityUnchanged(destination, expectedDestination);
+          await rename(destination, backup);
+          movedExisting = true;
+        } else {
+          await assertPathStillAbsent(destination);
+        }
+        await rename(transactionRoot, destination);
+        destinationCommitted = true;
+      } catch (error) {
+        if (movedExisting && !destinationCommitted) {
+          try {
+            await rename(backup, destination);
+          } catch {
+            throw new DocWenMachineError(
+              "docwen_commit_rollback_failed",
+              "Bundle commit and rollback both failed.",
+              {
+                cause: error instanceof Error ? error.message : String(error),
+                backup,
+              },
+            );
+          }
+        }
+        throw error;
+      } finally {
+        if (!destinationCommitted) {
+          await rm(transactionRoot, { recursive: true, force: true }).catch(() => undefined);
+        }
       }
-      const manifestPath = path.join(transactionRoot, ".docwen-artifact-bundle.json");
-      if (
-        bundle.artifacts.some(
-          (artifact) => artifactCommitPath(bundle, artifact) === ".docwen-artifact-bundle.json",
-        )
-      ) {
-        throw new DocWenMachineError(
-          "docwen_bundle_locator_reserved",
-          "Bundle uses the consumer manifest locator.",
-        );
+
+      if (movedExisting) {
+        try {
+          if (hooks.cleanupBackup) await hooks.cleanupBackup(backup);
+          else await rm(backup, { recursive: true, force: true });
+        } catch (error) {
+          hooks.onCleanupWarning?.(
+            `The new Bundle was committed, but the previous output backup could not be removed: ${errorMessage(error)}`,
+          );
+        }
       }
-      await writeFile(manifestPath, `${JSON.stringify(serializableBundle(bundle), null, 2)}\n`, {
-        encoding: "utf8",
-        flag: "wx",
-      });
-      await hooks.beforeSwap?.();
-      if (expectedDestination) {
-        await assertPathIdentityUnchanged(destination, expectedDestination);
-        await rename(destination, backup);
-        movedExisting = true;
-      } else {
-        await assertPathStillAbsent(destination);
-      }
-      await rename(transactionRoot, destination);
-      destinationCommitted = true;
-      if (movedExisting) await rm(backup, { recursive: true, force: true });
       return {
         artifactPaths,
         preferredArtifactPath: path.join(destination, ...artifactCommitPath(bundle, preferred).split("/")),
       };
-    } catch (error) {
-      if (movedExisting) {
-        try {
-          if (destinationCommitted) await rename(destination, transactionRoot);
-          await rename(backup, destination);
-        } catch {
-          throw new DocWenMachineError(
-            "docwen_commit_rollback_failed",
-            "Bundle commit and rollback both failed.",
-            {
-              cause: error instanceof Error ? error.message : String(error),
-              backup,
-            },
-          );
-        }
-      }
-      throw error;
-    } finally {
-      await rm(transactionRoot, { recursive: true, force: true });
-    }
-  });
+    },
+    hooks.onCleanupWarning,
+  );
 }
 
 async function atomicReplaceFile(
@@ -1030,69 +1048,76 @@ async function atomicReplaceFile(
   hooks: CommitTestHooks = {},
   expectedSource?: { sizeBytes: number; sha256: string },
 ): Promise<string> {
-  if (!path.isAbsolute(destination))
+  if (!path.isAbsolute(destination)) {
     throw new DocWenMachineError("docwen_path_not_absolute", "Input path is not absolute.");
-  return withDestinationLock(destination, async () => {
-    const existing = await lstat(destination, { bigint: true });
-    if (!existing.isFile() || existing.isSymbolicLink()) {
-      throw new DocWenMachineError("docwen_input_not_regular_file", "In-place target is not a regular file.");
-    }
-    const expectedDestination = expectedSource
-      ? await assertSourceVersionUnchanged(destination, existing, expectedSource)
-      : pathIdentity(existing);
-    const temporary = `${destination}.docwen-replacement-${randomUUID()}`;
-    const backup = `${destination}.docwen-backup-${randomUUID()}`;
-    await copyFile(replacement, temporary, fsConstants.COPYFILE_EXCL);
-    await assertCopiedArtifact(temporary, expected.sizeBytes, expected.sha256);
-    await chmod(temporary, Number(existing.mode));
-    let movedExisting = false;
-    let destinationCommitted = false;
-    try {
-      await hooks.beforeSwap?.();
-      await assertPathIdentityUnchanged(destination, expectedDestination);
-      await rename(destination, backup);
-      movedExisting = true;
-      await rename(temporary, destination);
-      destinationCommitted = true;
-      await rm(backup, { force: true });
-      return destination;
-    } catch (error) {
+  }
+  return withDestinationLock(
+    destination,
+    async () => {
+      const existing = await lstat(destination, { bigint: true });
+      if (!existing.isFile() || existing.isSymbolicLink()) {
+        throw new DocWenMachineError("docwen_input_not_regular_file", "In-place target is not a regular file.");
+      }
+      const expectedDestination = expectedSource
+        ? await assertSourceVersionUnchanged(destination, existing, expectedSource)
+        : pathIdentity(existing);
+      const temporary = `${destination}.docwen-replacement-${randomUUID()}`;
+      const backup = `${destination}.docwen-backup-${randomUUID()}`;
+      await copyFile(replacement, temporary, fsConstants.COPYFILE_EXCL);
+      await assertCopiedArtifact(temporary, expected.sizeBytes, expected.sha256);
+      await chmod(temporary, Number(existing.mode));
+      let movedExisting = false;
+      let destinationCommitted = false;
+      try {
+        await hooks.beforeSwap?.();
+        await assertPathIdentityUnchanged(destination, expectedDestination);
+        await rename(destination, backup);
+        movedExisting = true;
+        await rename(temporary, destination);
+        destinationCommitted = true;
+      } catch (error) {
+        if (movedExisting && !destinationCommitted) {
+          try {
+            await rename(backup, destination);
+          } catch {
+            throw new DocWenMachineError(
+              "docwen_commit_rollback_failed",
+              "In-place commit and rollback both failed.",
+              {
+                cause: error instanceof Error ? error.message : String(error),
+                backup,
+              },
+            );
+          }
+        }
+        throw error;
+      } finally {
+        if (!destinationCommitted) await rm(temporary, { force: true }).catch(() => undefined);
+      }
+
       if (movedExisting) {
         try {
-          if (destinationCommitted) await rename(destination, temporary);
-          await rename(backup, destination);
-        } catch {
-          throw new DocWenMachineError(
-            "docwen_commit_rollback_failed",
-            "In-place commit and rollback both failed.",
-            {
-              cause: error instanceof Error ? error.message : String(error),
-              backup,
-            },
+          if (hooks.cleanupBackup) await hooks.cleanupBackup(backup);
+          else await rm(backup, { force: true });
+        } catch (error) {
+          hooks.onCleanupWarning?.(
+            `The replacement was committed, but the previous file backup could not be removed: ${errorMessage(error)}`,
           );
         }
       }
-      throw error;
-    } finally {
-      await rm(temporary, { force: true });
-    }
-  });
+      return destination;
+    },
+    hooks.onCleanupWarning,
+  );
 }
 
-async function withDestinationLock<T>(destination: string, body: () => Promise<T>): Promise<T> {
+async function withDestinationLock<T>(
+  destination: string,
+  body: () => Promise<T>,
+  onCleanupWarning?: (message: string) => void,
+): Promise<T> {
   const lockPath = `${destination}.docwen-lock`;
-  let lock;
-  try {
-    lock = await open(lockPath, "wx", 0o600);
-  } catch (error) {
-    if (isAlreadyExists(error)) {
-      throw new DocWenMachineError(
-        "docwen_output_busy",
-        "Another DocWen write is already targeting this path.",
-      );
-    }
-    throw error;
-  }
+  const lock = await acquireDestinationLock(lockPath);
   const expectedLock = pathIdentity(await lock.stat({ bigint: true }));
   let bodyResult: T | undefined;
   let bodyFailure: unknown;
@@ -1101,7 +1126,7 @@ async function withDestinationLock<T>(destination: string, body: () => Promise<T
   } catch (error) {
     bodyFailure = error;
   }
-  let lockClosed = false;
+
   let cleanupFailure: unknown;
   try {
     const currentLock = await lstat(lockPath, { bigint: true });
@@ -1109,18 +1134,82 @@ async function withDestinationLock<T>(destination: string, body: () => Promise<T
       throw new DocWenMachineError("docwen_output_lock_lost", "The DocWen output lock changed unexpectedly.");
     }
     await lock.close();
-    lockClosed = true;
     await rm(lockPath);
   } catch (error) {
-    cleanupFailure =
-      error instanceof DocWenMachineError
-        ? error
-        : new DocWenMachineError("docwen_output_lock_lost", "The DocWen output lock was lost.");
+    await lock.close().catch(() => undefined);
+    cleanupFailure = error;
   }
-  if (!lockClosed) await lock.close().catch(() => undefined);
-  if (cleanupFailure) throw cleanupFailure;
-  if (bodyFailure) throw bodyFailure;
+
+  if (bodyFailure) {
+    if (cleanupFailure) {
+      throw new DocWenMachineError(
+        "docwen_output_lock_lost",
+        "The DocWen write failed and its output lock could not be cleaned up safely.",
+        {
+          cause: errorMessage(bodyFailure),
+          lock_cleanup: errorMessage(cleanupFailure),
+        },
+      );
+    }
+    throw bodyFailure;
+  }
+  if (cleanupFailure) {
+    onCleanupWarning?.(`The operation succeeded, but its output lock could not be removed: ${errorMessage(cleanupFailure)}`);
+  }
   return bodyResult as T;
+}
+
+async function acquireDestinationLock(lockPath: string) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const lock = await open(lockPath, "wx", 0o600);
+      await lock.writeFile(
+        `${JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() })}\n`,
+        "utf8",
+      );
+      return lock;
+    } catch (error) {
+      if (!isAlreadyExists(error)) throw error;
+      if (attempt === 0 && (await removeDeadOwnerLock(lockPath))) continue;
+      throw new DocWenMachineError(
+        "docwen_output_busy",
+        "Another DocWen write is already targeting this path.",
+      );
+    }
+  }
+  throw new DocWenMachineError("docwen_output_busy", "Another DocWen write is already targeting this path.");
+}
+
+async function removeDeadOwnerLock(lockPath: string): Promise<boolean> {
+  let before: BigIntStats;
+  let payload: unknown;
+  try {
+    before = await lstat(lockPath, { bigint: true });
+    if (!before.isFile() || before.isSymbolicLink()) return false;
+    payload = JSON.parse(await readFile(lockPath, "utf8"));
+  } catch {
+    return false;
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const pid = (payload as Record<string, unknown>).pid;
+  if (!Number.isSafeInteger(pid) || (pid as number) <= 0 || processIsAlive(pid as number)) return false;
+  try {
+    const after = await lstat(lockPath, { bigint: true });
+    if (!samePathIdentity(after, pathIdentity(before))) return false;
+    await rm(lockPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !isErrno(error, "ESRCH");
+  }
 }
 
 async function assertPathStillAbsent(destination: string): Promise<void> {
