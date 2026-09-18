@@ -1399,6 +1399,7 @@ function isAlreadyExists(error: unknown): boolean {
 export const clientTesting = {
   atomicCommitBundle,
   atomicReplaceFile,
+  buildConversionOptions,
   buildInputHandles,
   capabilityAcceptsInputs,
   parsePageSelection,
