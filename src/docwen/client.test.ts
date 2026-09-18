@@ -161,6 +161,27 @@ describe("OpenClaw Artifact Bundle commit", () => {
     expect(await readFile(source, "utf8")).toBe("new");
   });
 
+  it("keeps a committed Bundle when old-backup cleanup fails", async () => {
+    const workspace = await root();
+    const output = path.join(workspace, "replace-output");
+    await mkdir(output);
+    await writeFile(path.join(output, "old.txt"), "old", "utf8");
+    const bundle = await oneArtifactBundle(workspace, "replacement", "new");
+    const warnings: string[] = [];
+
+    const committed = await clientTesting.atomicCommitBundle(bundle, output, true, {
+      cleanupBackup: async () => {
+        throw new Error("simulated cleanup failure");
+      },
+      onCleanupWarning: (warning) => warnings.push(warning),
+    });
+
+    expect(await readFile(committed.preferredArtifactPath, "utf8")).toBe("new");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("was committed");
+    expect((await readdir(workspace)).some((name) => name.includes(".docwen-backup-"))).toBe(true);
+  });
+
   it("fails a concurrent Bundle commit without clobbering the lock holder", async () => {
     const workspace = await root();
     const output = path.join(workspace, "shared-output");
@@ -289,6 +310,26 @@ describe("OpenClaw Artifact Bundle commit", () => {
       ),
     ).rejects.toMatchObject({ code: "docwen_source_changed" });
     expect(await readFile(destination, "utf8")).toBe("newer user content");
+  });
+
+  it("keeps an in-place replacement when old-backup cleanup fails", async () => {
+    const workspace = await root();
+    const destination = path.join(workspace, "document.md");
+    const replacement = path.join(workspace, "replacement.md");
+    await writeFile(destination, "old", "utf8");
+    await writeFile(replacement, "new", "utf8");
+    const warnings: string[] = [];
+
+    await clientTesting.atomicReplaceFile(destination, replacement, expectedContent("new"), {
+      cleanupBackup: async () => {
+        throw new Error("simulated cleanup failure");
+      },
+      onCleanupWarning: (warning) => warnings.push(warning),
+    });
+
+    expect(await readFile(destination, "utf8")).toBe("new");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("was committed");
   });
 
   it("detects an in-place target mutation immediately before replacement", async () => {
