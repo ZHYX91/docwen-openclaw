@@ -12,8 +12,9 @@ Use the registered `docwen_*` tools. Never construct a shell command for DocWen.
 
 1. Call `docwen_info` to verify Machine Protocol v1, Artifact Bundle v2, capability availability, and health.
 2. Use `docwen_inspect` before choosing an operation for an unfamiliar input.
-3. Use `docwen_resources` when a format, template, or numbering scheme must be selected.
-4. `docwen_validate_markdown` is read-only: it returns the structured report and removes its request-owned staging area.
+3. Use `docwen_resources` when a format, template, optimization, or numbering scheme must be selected.
+4. When a template is required, call `docwen_resources` with `kind="templates"` and pass the returned canonical resource `id` to `docwen_convert.template`. Never pass a file path or display name.
+5. `docwen_validate_markdown` is read-only: it returns the structured report and removes its request-owned staging area.
 
 ## Write safety
 
@@ -38,11 +39,15 @@ Before calling a write tool:
 - do not retry a write automatically after it starts;
 - report the preferred artifact and every committed artifact from the structured result.
 
-`docwen_number_markdown` requires exactly one of an explicit `outputDir` or explicit `inPlace=true`. Never infer in-place modification.
+`docwen_number_markdown` requires exactly one of an explicit `outputDir` or explicit `inPlace=true`. Never infer in-place modification. An in-place operation is bound to the source version read at task start; if the source changes while DocWen is preparing the result, report the conflict and leave the newer file untouched.
+
+A successful result can include non-fatal cleanup warnings after the output has already been committed. Report those warnings, but do not repeat the write: a post-commit cleanup problem does not make the published result disappear or make the operation safe to retry automatically.
 
 ## Artifact semantics
 
 The Bundle's `document`, `fragment`, and `resource` kinds and its relations describe output semantics. They do not authorize another product's page, node, or workspace structure. Preserve the complete committed Bundle directory unless the user explicitly requests a later import or cleanup operation.
+
+A DocWen template is a resource identity, not a host path. Treat `origin`, `is_default`, and other template metadata returned by newer DocWen builds as descriptive facts; the canonical `id` remains the only value sent back in conversion requests.
 
 ## Availability
 

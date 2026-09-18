@@ -77,6 +77,8 @@ type PathIdentity = Readonly<{
 
 type CommitTestHooks = Readonly<{
   beforeSwap?: () => Promise<void> | void;
+  cleanupBackup?: (backup: string) => Promise<void>;
+  onCleanupWarning?: (message: string) => void;
 }>;
 
 export async function executeDocWenTool(
@@ -228,6 +230,7 @@ async function validateMarkdown(
     signal,
     true,
   );
+  const warnings: string[] = [];
   try {
     const preferred = preferredArtifact(execution.completed.bundle);
     if (preferred.media_type !== JSON_MEDIA_TYPE || preferred.size_bytes > MAX_REPORT_BYTES) {
@@ -248,14 +251,17 @@ async function validateMarkdown(
         },
       );
     }
+    await cleanupTaskRoot(execution.temporaryRoot, warnings);
     return {
       capability_id: "validate.markdown",
       report: jsonValue(report),
       diagnostics: execution.completed.diagnostics,
       metrics: execution.completed.metrics,
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
-  } finally {
-    await rm(execution.temporaryRoot, { recursive: true, force: true });
+  } catch (error) {
+    await rm(execution.temporaryRoot, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
   }
 }
 
@@ -282,33 +288,113 @@ async function convert(
       `No unique available DocWen conversion accepts the supplied typed inputs and produces ${outputMediaType}.`,
     );
   }
-  const options: JsonObject = {};
-  const template = optionalString(params, "template");
-  if (template) options.template_name = template;
-  const keepImages = optionalBoolean(params, "keepImages");
-  if (keepImages !== undefined) {
-    options.to_md_keep_images = keepImages;
-    options.image_mode = keepImages ? "file" : "omit";
-  }
-  const ocr = optionalBoolean(params, "ocr");
-  if (ocr !== undefined) options.to_md_enable_ocr = ocr;
-  const ocrLanguage = optionalString(params, "ocrLanguage");
-  if (ocrLanguage) options.ocr_language = ocrLanguage;
-  const removeNumbering = optionalBoolean(params, "removeNumbering");
-  if (removeNumbering !== undefined) options.remove_numbering = removeNumbering;
-  const addNumbering = optionalBoolean(params, "addNumbering");
-  if (addNumbering !== undefined) options.add_numbering = addNumbering;
-  const numberingScheme = optionalString(params, "numberingScheme");
-  if (numberingScheme) options.numbering_scheme = numberingScheme;
+  const capability = matches[0]!;
+  const options = buildConversionOptions(capability, params);
   return persistentTask(
     binaryPath,
-    matches[0]!.capability_id,
+    capability.capability_id,
     inputs,
     options,
     params,
     config,
     signal,
     preparedInputs,
+    capability,
+  );
+}
+
+function buildConversionOptions(capability: MachineCapability, params: Params): JsonObject {
+  const options: JsonObject = {};
+  const template = optionalString(params, "template");
+  if (template) setSupportedOption(capability, options, ["template_name"], template, "template");
+
+  const keepImages = optionalBoolean(params, "keepImages");
+  if (keepImages !== undefined) {
+    const mapped = setSupportedOption(
+      capability,
+      options,
+      ["preserve_resources", "to_md_keep_images"],
+      keepImages,
+      "keepImages",
+      false,
+    );
+    const imageMode = capabilityOptionSchema(capability, "image_mode");
+    if (imageMode) {
+      const requestedMode = keepImages ? "file" : "omit";
+      if (optionAllowsValue(imageMode, requestedMode)) {
+        options.image_mode = requestedMode;
+      } else if (!mapped) {
+        throw unsupportedCapabilityOption(capability, "keepImages");
+      }
+    } else if (!mapped) {
+      throw unsupportedCapabilityOption(capability, "keepImages");
+    }
+  }
+
+  const ocr = optionalBoolean(params, "ocr");
+  if (ocr !== undefined) {
+    setSupportedOption(
+      capability,
+      options,
+      ["recognize_text", "to_md_enable_ocr"],
+      ocr,
+      "ocr",
+    );
+  }
+
+  const ocrLanguage = optionalString(params, "ocrLanguage");
+  if (ocrLanguage) setSupportedOption(capability, options, ["ocr_language"], ocrLanguage, "ocrLanguage");
+
+  const removeNumbering = optionalBoolean(params, "removeNumbering");
+  if (removeNumbering !== undefined) {
+    setSupportedOption(capability, options, ["remove_numbering"], removeNumbering, "removeNumbering");
+  }
+
+  const addNumbering = optionalBoolean(params, "addNumbering");
+  if (addNumbering !== undefined) {
+    setSupportedOption(capability, options, ["add_numbering"], addNumbering, "addNumbering");
+  }
+
+  const numberingScheme = optionalString(params, "numberingScheme");
+  if (numberingScheme) {
+    setSupportedOption(capability, options, ["numbering_scheme"], numberingScheme, "numberingScheme");
+  }
+  return options;
+}
+
+function setSupportedOption(
+  capability: MachineCapability,
+  options: JsonObject,
+  names: readonly string[],
+  value: string | boolean,
+  parameter: string,
+  required = true,
+): boolean {
+  const name = names.find((candidate) => capabilityOptionSchema(capability, candidate) !== undefined);
+  if (!name) {
+    if (required) throw unsupportedCapabilityOption(capability, parameter);
+    return false;
+  }
+  options[name] = value;
+  return true;
+}
+
+function capabilityOptionSchema(capability: MachineCapability, name: string): JsonObject | undefined {
+  const properties = capability.options_schema.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return undefined;
+  const schema = (properties as JsonObject)[name];
+  return schema && typeof schema === "object" && !Array.isArray(schema) ? (schema as JsonObject) : undefined;
+}
+
+function optionAllowsValue(schema: JsonObject, value: string): boolean {
+  const allowed = schema.enum;
+  return !Array.isArray(allowed) || allowed.includes(value);
+}
+
+function unsupportedCapabilityOption(capability: MachineCapability, parameter: string): DocWenMachineError {
+  return new DocWenMachineError(
+    "docwen_option_unsupported",
+    `The selected DocWen capability does not support the requested ${parameter} option: ${capability.capability_id}`,
   );
 }
 
@@ -352,6 +438,11 @@ async function numberMarkdown(
       signal,
     );
   }
+  const preparedInputs = await buildInputHandles([input]);
+  const sourceVersion = {
+    sizeBytes: preparedInputs[0]!.size_bytes,
+    sha256: preparedInputs[0]!.sha256,
+  };
   const execution = await executeTask(
     binaryPath,
     "transform.markdown.heading_numbering",
@@ -360,7 +451,9 @@ async function numberMarkdown(
     config,
     signal,
     true,
+    preparedInputs,
   );
+  const warnings: string[] = [];
   try {
     const preferred = preferredArtifact(execution.completed.bundle);
     if (preferred.kind !== "document" || preferred.media_type !== MARKDOWN_MEDIA_TYPE) {
@@ -369,13 +462,28 @@ async function numberMarkdown(
         "Numbering did not return one preferred Markdown document.",
       );
     }
-    const committedPath = await atomicReplaceFile(file, preferred.absolutePath, {
-      sizeBytes: preferred.size_bytes,
-      sha256: preferred.sha256,
-    });
-    return taskResult(execution.completed, path.dirname(committedPath), [committedPath], committedPath, true);
-  } finally {
-    await rm(execution.temporaryRoot, { recursive: true, force: true });
+    const committedPath = await atomicReplaceFile(
+      file,
+      preferred.absolutePath,
+      {
+        sizeBytes: preferred.size_bytes,
+        sha256: preferred.sha256,
+      },
+      { onCleanupWarning: (warning) => warnings.push(warning) },
+      sourceVersion,
+    );
+    await cleanupTaskRoot(execution.temporaryRoot, warnings);
+    return taskResult(
+      execution.completed,
+      path.dirname(committedPath),
+      [committedPath],
+      committedPath,
+      true,
+      warnings,
+    );
+  } catch (error) {
+    await rm(execution.temporaryRoot, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
   }
 }
 
@@ -388,6 +496,7 @@ async function persistentTask(
   config: DocWenPluginConfig,
   signal?: AbortSignal,
   preparedInputs?: MachineInputHandle[],
+  preparedCapability?: MachineCapability,
 ): Promise<JsonObject> {
   const outputDir = requiredAbsolutePath(params, "outputDir");
   const overwrite = optionalBoolean(params, "overwrite") ?? false;
@@ -401,18 +510,25 @@ async function persistentTask(
     signal,
     true,
     preparedInputs,
+    preparedCapability,
   );
+  const warnings: string[] = [];
   try {
-    const committed = await atomicCommitBundle(execution.completed.bundle, outputDir, overwrite);
+    const committed = await atomicCommitBundle(execution.completed.bundle, outputDir, overwrite, {
+      onCleanupWarning: (warning) => warnings.push(warning),
+    });
+    await cleanupTaskRoot(execution.temporaryRoot, warnings);
     return taskResult(
       execution.completed,
       outputDir,
       committed.artifactPaths,
       committed.preferredArtifactPath,
       false,
+      warnings,
     );
-  } finally {
-    await rm(execution.temporaryRoot, { recursive: true, force: true });
+  } catch (error) {
+    await rm(execution.temporaryRoot, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
   }
 }
 
@@ -425,12 +541,16 @@ async function executeTask(
   signal: AbortSignal | undefined,
   requireAvailable: boolean,
   preparedInputs?: MachineInputHandle[],
+  preparedCapability?: MachineCapability,
 ): Promise<TaskExecution> {
   const inputs = preparedInputs ?? (await buildInputHandles(inputSpecs));
   if (requireAvailable) {
-    const capability = (await discoverCapabilities(binaryPath, config, signal)).find(
-      (item) => item.capability_id === capabilityId,
-    );
+    const capability =
+      preparedCapability?.capability_id === capabilityId
+        ? preparedCapability
+        : (await discoverCapabilities(binaryPath, config, signal)).find(
+            (item) => item.capability_id === capabilityId,
+          );
     if (!capability || capability.availability === "unavailable") {
       throw new DocWenMachineError(
         "docwen_capability_unavailable",
@@ -462,7 +582,7 @@ async function executeTask(
     });
     return { completed, temporaryRoot };
   } catch (error) {
-    await rm(temporaryRoot, { recursive: true, force: true });
+    await rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
 }
@@ -855,74 +975,89 @@ async function atomicCommitBundle(
   assertSafeDestination(destination);
   const parent = path.dirname(destination);
   await mkdir(parent, { recursive: true });
-  return withDestinationLock(destination, async () => {
-    const expectedDestination = await preflightOutputDirectory(destination, overwrite);
-    const transactionRoot = await mkdtemp(path.join(parent, `.docwen-${path.basename(destination)}-`));
-    const backup = `${destination}.docwen-backup-${randomUUID()}`;
-    const preferred = preferredArtifact(bundle);
-    let movedExisting = false;
-    let destinationCommitted = false;
-    try {
+  return withDestinationLock(
+    destination,
+    async () => {
+      const expectedDestination = await preflightOutputDirectory(destination, overwrite);
+      const transactionRoot = await mkdtemp(path.join(parent, `.docwen-${path.basename(destination)}-`));
+      const backup = `${destination}.docwen-backup-${randomUUID()}`;
+      const preferred = preferredArtifact(bundle);
+      let movedExisting = false;
+      let destinationCommitted = false;
       const artifactPaths: string[] = [];
-      for (const artifact of bundle.artifacts) {
-        const commitPath = artifactCommitPath(bundle, artifact);
-        const target = path.join(transactionRoot, ...commitPath.split("/"));
-        await mkdir(path.dirname(target), { recursive: true });
-        await copyFile(artifact.absolutePath, target, fsConstants.COPYFILE_EXCL);
-        await assertCopiedArtifact(target, artifact.size_bytes, artifact.sha256);
-        artifactPaths.push(path.join(destination, ...commitPath.split("/")));
+      try {
+        for (const artifact of bundle.artifacts) {
+          const commitPath = artifactCommitPath(bundle, artifact);
+          const target = path.join(transactionRoot, ...commitPath.split("/"));
+          await mkdir(path.dirname(target), { recursive: true });
+          await copyFile(artifact.absolutePath, target, fsConstants.COPYFILE_EXCL);
+          await assertCopiedArtifact(target, artifact.size_bytes, artifact.sha256);
+          artifactPaths.push(path.join(destination, ...commitPath.split("/")));
+        }
+        const manifestPath = path.join(transactionRoot, ".docwen-artifact-bundle.json");
+        if (
+          bundle.artifacts.some(
+            (artifact) => artifactCommitPath(bundle, artifact) === ".docwen-artifact-bundle.json",
+          )
+        ) {
+          throw new DocWenMachineError(
+            "docwen_bundle_locator_reserved",
+            "Bundle uses the consumer manifest locator.",
+          );
+        }
+        await writeFile(manifestPath, `${JSON.stringify(serializableBundle(bundle), null, 2)}\n`, {
+          encoding: "utf8",
+          flag: "wx",
+        });
+        await hooks.beforeSwap?.();
+        if (expectedDestination) {
+          await assertPathIdentityUnchanged(destination, expectedDestination);
+          await rename(destination, backup);
+          movedExisting = true;
+        } else {
+          await assertPathStillAbsent(destination);
+        }
+        await rename(transactionRoot, destination);
+        destinationCommitted = true;
+      } catch (error) {
+        if (movedExisting && !destinationCommitted) {
+          try {
+            await rename(backup, destination);
+          } catch {
+            throw new DocWenMachineError(
+              "docwen_commit_rollback_failed",
+              "Bundle commit and rollback both failed.",
+              {
+                cause: error instanceof Error ? error.message : String(error),
+                backup,
+              },
+            );
+          }
+        }
+        throw error;
+      } finally {
+        if (!destinationCommitted) {
+          await rm(transactionRoot, { recursive: true, force: true }).catch(() => undefined);
+        }
       }
-      const manifestPath = path.join(transactionRoot, ".docwen-artifact-bundle.json");
-      if (
-        bundle.artifacts.some(
-          (artifact) => artifactCommitPath(bundle, artifact) === ".docwen-artifact-bundle.json",
-        )
-      ) {
-        throw new DocWenMachineError(
-          "docwen_bundle_locator_reserved",
-          "Bundle uses the consumer manifest locator.",
-        );
+
+      if (movedExisting) {
+        try {
+          if (hooks.cleanupBackup) await hooks.cleanupBackup(backup);
+          else await rm(backup, { recursive: true, force: true });
+        } catch (error) {
+          hooks.onCleanupWarning?.(
+            `The new Bundle was committed, but the previous output backup could not be removed: ${errorMessage(error)}`,
+          );
+        }
       }
-      await writeFile(manifestPath, `${JSON.stringify(serializableBundle(bundle), null, 2)}\n`, {
-        encoding: "utf8",
-        flag: "wx",
-      });
-      await hooks.beforeSwap?.();
-      if (expectedDestination) {
-        await assertPathIdentityUnchanged(destination, expectedDestination);
-        await rename(destination, backup);
-        movedExisting = true;
-      } else {
-        await assertPathStillAbsent(destination);
-      }
-      await rename(transactionRoot, destination);
-      destinationCommitted = true;
-      if (movedExisting) await rm(backup, { recursive: true, force: true });
       return {
         artifactPaths,
         preferredArtifactPath: path.join(destination, ...artifactCommitPath(bundle, preferred).split("/")),
       };
-    } catch (error) {
-      if (movedExisting) {
-        try {
-          if (destinationCommitted) await rename(destination, transactionRoot);
-          await rename(backup, destination);
-        } catch {
-          throw new DocWenMachineError(
-            "docwen_commit_rollback_failed",
-            "Bundle commit and rollback both failed.",
-            {
-              cause: error instanceof Error ? error.message : String(error),
-              backup,
-            },
-          );
-        }
-      }
-      throw error;
-    } finally {
-      await rm(transactionRoot, { recursive: true, force: true });
-    }
-  });
+    },
+    hooks.onCleanupWarning,
+  );
 }
 
 async function atomicReplaceFile(
@@ -930,68 +1065,78 @@ async function atomicReplaceFile(
   replacement: string,
   expected: { sizeBytes: number; sha256: string },
   hooks: CommitTestHooks = {},
+  expectedSource?: { sizeBytes: number; sha256: string },
 ): Promise<string> {
-  if (!path.isAbsolute(destination))
+  if (!path.isAbsolute(destination)) {
     throw new DocWenMachineError("docwen_path_not_absolute", "Input path is not absolute.");
-  return withDestinationLock(destination, async () => {
-    const existing = await lstat(destination, { bigint: true });
-    if (!existing.isFile() || existing.isSymbolicLink()) {
-      throw new DocWenMachineError("docwen_input_not_regular_file", "In-place target is not a regular file.");
-    }
-    const expectedDestination = pathIdentity(existing);
-    const temporary = `${destination}.docwen-replacement-${randomUUID()}`;
-    const backup = `${destination}.docwen-backup-${randomUUID()}`;
-    await copyFile(replacement, temporary, fsConstants.COPYFILE_EXCL);
-    await assertCopiedArtifact(temporary, expected.sizeBytes, expected.sha256);
-    await chmod(temporary, Number(existing.mode));
-    let movedExisting = false;
-    let destinationCommitted = false;
-    try {
-      await hooks.beforeSwap?.();
-      await assertPathIdentityUnchanged(destination, expectedDestination);
-      await rename(destination, backup);
-      movedExisting = true;
-      await rename(temporary, destination);
-      destinationCommitted = true;
-      await rm(backup, { force: true });
-      return destination;
-    } catch (error) {
+  }
+  return withDestinationLock(
+    destination,
+    async () => {
+      const existing = await lstat(destination, { bigint: true });
+      if (!existing.isFile() || existing.isSymbolicLink()) {
+        throw new DocWenMachineError("docwen_input_not_regular_file", "In-place target is not a regular file.");
+      }
+      const expectedDestination = expectedSource
+        ? await assertSourceVersionUnchanged(destination, existing, expectedSource)
+        : pathIdentity(existing);
+      const temporary = `${destination}.docwen-replacement-${randomUUID()}`;
+      const backup = `${destination}.docwen-backup-${randomUUID()}`;
+      await copyFile(replacement, temporary, fsConstants.COPYFILE_EXCL);
+      await assertCopiedArtifact(temporary, expected.sizeBytes, expected.sha256);
+      await chmod(temporary, Number(existing.mode));
+      let movedExisting = false;
+      let destinationCommitted = false;
+      try {
+        await hooks.beforeSwap?.();
+        await assertPathIdentityUnchanged(destination, expectedDestination);
+        await rename(destination, backup);
+        movedExisting = true;
+        await rename(temporary, destination);
+        destinationCommitted = true;
+      } catch (error) {
+        if (movedExisting && !destinationCommitted) {
+          try {
+            await rename(backup, destination);
+          } catch {
+            throw new DocWenMachineError(
+              "docwen_commit_rollback_failed",
+              "In-place commit and rollback both failed.",
+              {
+                cause: error instanceof Error ? error.message : String(error),
+                backup,
+              },
+            );
+          }
+        }
+        throw error;
+      } finally {
+        if (!destinationCommitted) await rm(temporary, { force: true }).catch(() => undefined);
+      }
+
       if (movedExisting) {
         try {
-          if (destinationCommitted) await rename(destination, temporary);
-          await rename(backup, destination);
-        } catch {
-          throw new DocWenMachineError(
-            "docwen_commit_rollback_failed",
-            "In-place commit and rollback both failed.",
-            {
-              cause: error instanceof Error ? error.message : String(error),
-              backup,
-            },
+          if (hooks.cleanupBackup) await hooks.cleanupBackup(backup);
+          else await rm(backup, { force: true });
+        } catch (error) {
+          hooks.onCleanupWarning?.(
+            `The replacement was committed, but the previous file backup could not be removed: ${errorMessage(error)}`,
           );
         }
       }
-      throw error;
-    } finally {
-      await rm(temporary, { force: true });
-    }
-  });
+      return destination;
+    },
+    hooks.onCleanupWarning,
+  );
 }
 
-async function withDestinationLock<T>(destination: string, body: () => Promise<T>): Promise<T> {
+async function withDestinationLock<T>(
+  destination: string,
+  body: () => Promise<T>,
+  onCleanupWarning?: (message: string) => void,
+): Promise<T> {
   const lockPath = `${destination}.docwen-lock`;
-  let lock;
-  try {
-    lock = await open(lockPath, "wx", 0o600);
-  } catch (error) {
-    if (isAlreadyExists(error)) {
-      throw new DocWenMachineError(
-        "docwen_output_busy",
-        "Another DocWen write is already targeting this path.",
-      );
-    }
-    throw error;
-  }
+  const lock = await acquireDestinationLock(lockPath);
   const expectedLock = pathIdentity(await lock.stat({ bigint: true }));
   let bodyResult: T | undefined;
   let bodyFailure: unknown;
@@ -1000,7 +1145,7 @@ async function withDestinationLock<T>(destination: string, body: () => Promise<T
   } catch (error) {
     bodyFailure = error;
   }
-  let lockClosed = false;
+
   let cleanupFailure: unknown;
   try {
     const currentLock = await lstat(lockPath, { bigint: true });
@@ -1008,18 +1153,82 @@ async function withDestinationLock<T>(destination: string, body: () => Promise<T
       throw new DocWenMachineError("docwen_output_lock_lost", "The DocWen output lock changed unexpectedly.");
     }
     await lock.close();
-    lockClosed = true;
     await rm(lockPath);
   } catch (error) {
-    cleanupFailure =
-      error instanceof DocWenMachineError
-        ? error
-        : new DocWenMachineError("docwen_output_lock_lost", "The DocWen output lock was lost.");
+    await lock.close().catch(() => undefined);
+    cleanupFailure = error;
   }
-  if (!lockClosed) await lock.close().catch(() => undefined);
-  if (cleanupFailure) throw cleanupFailure;
-  if (bodyFailure) throw bodyFailure;
+
+  if (bodyFailure) {
+    if (cleanupFailure) {
+      throw new DocWenMachineError(
+        "docwen_output_lock_lost",
+        "The DocWen write failed and its output lock could not be cleaned up safely.",
+        {
+          cause: errorMessage(bodyFailure),
+          lock_cleanup: errorMessage(cleanupFailure),
+        },
+      );
+    }
+    throw bodyFailure;
+  }
+  if (cleanupFailure) {
+    onCleanupWarning?.(`The operation succeeded, but its output lock could not be removed: ${errorMessage(cleanupFailure)}`);
+  }
   return bodyResult as T;
+}
+
+async function acquireDestinationLock(lockPath: string) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const lock = await open(lockPath, "wx", 0o600);
+      await lock.writeFile(
+        `${JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() })}\n`,
+        "utf8",
+      );
+      return lock;
+    } catch (error) {
+      if (!isAlreadyExists(error)) throw error;
+      if (attempt === 0 && (await removeDeadOwnerLock(lockPath))) continue;
+      throw new DocWenMachineError(
+        "docwen_output_busy",
+        "Another DocWen write is already targeting this path.",
+      );
+    }
+  }
+  throw new DocWenMachineError("docwen_output_busy", "Another DocWen write is already targeting this path.");
+}
+
+async function removeDeadOwnerLock(lockPath: string): Promise<boolean> {
+  let before: BigIntStats;
+  let payload: unknown;
+  try {
+    before = await lstat(lockPath, { bigint: true });
+    if (!before.isFile() || before.isSymbolicLink()) return false;
+    payload = JSON.parse(await readFile(lockPath, "utf8"));
+  } catch {
+    return false;
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const pid = (payload as Record<string, unknown>).pid;
+  if (!Number.isSafeInteger(pid) || (pid as number) <= 0 || processIsAlive(pid as number)) return false;
+  try {
+    const after = await lstat(lockPath, { bigint: true });
+    if (!samePathIdentity(after, pathIdentity(before))) return false;
+    await rm(lockPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !isErrno(error, "ESRCH");
+  }
 }
 
 async function assertPathStillAbsent(destination: string): Promise<void> {
@@ -1045,6 +1254,28 @@ async function assertPathIdentityUnchanged(destination: string, expected: PathId
   if (!samePathIdentity(current, expected)) {
     throw new DocWenMachineError("docwen_output_changed", "The output target changed during commit.");
   }
+}
+
+async function assertSourceVersionUnchanged(
+  destination: string,
+  before: BigIntStats,
+  expected: { sizeBytes: number; sha256: string },
+): Promise<PathIdentity> {
+  if (before.size !== BigInt(expected.sizeBytes)) {
+    throw new DocWenMachineError(
+      "docwen_source_changed",
+      "The source file changed while DocWen was preparing the in-place result.",
+    );
+  }
+  const digest = await hashFile(destination);
+  const after = await lstat(destination, { bigint: true });
+  if (!samePathIdentity(after, pathIdentity(before)) || digest !== expected.sha256) {
+    throw new DocWenMachineError(
+      "docwen_source_changed",
+      "The source file changed while DocWen was preparing the in-place result.",
+    );
+  }
+  return pathIdentity(after);
 }
 
 async function assertCopiedArtifact(
@@ -1144,6 +1375,7 @@ function taskResult(
   artifactPaths: string[],
   preferredArtifactPath: string,
   inPlace: boolean,
+  warnings: readonly string[] = [],
 ): JsonObject {
   return {
     task_id: completed.taskId,
@@ -1157,7 +1389,16 @@ function taskResult(
     bundle: serializableBundle(completed.bundle),
     diagnostics: completed.diagnostics,
     metrics: completed.metrics,
+    ...(warnings.length > 0 ? { warnings: [...warnings] } : {}),
   };
+}
+
+async function cleanupTaskRoot(temporaryRoot: string, warnings: string[]): Promise<void> {
+  try {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  } catch (error) {
+    warnings.push(`The task completed, but its temporary files could not be removed: ${errorMessage(error)}`);
+  }
 }
 
 function assertSafeDestination(destination: string): void {
@@ -1302,6 +1543,10 @@ function jsonValue(value: unknown): JsonObject | string | number | boolean | nul
   return requiredObject(value, "JSON value");
 }
 
+function isErrno(error: unknown, code: string): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
+}
+
 function isNotFound(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
@@ -1313,6 +1558,7 @@ function isAlreadyExists(error: unknown): boolean {
 export const clientTesting = {
   atomicCommitBundle,
   atomicReplaceFile,
+  buildConversionOptions,
   buildInputHandles,
   capabilityAcceptsInputs,
   parsePageSelection,

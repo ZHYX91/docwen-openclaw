@@ -13,6 +13,7 @@ const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const DIGEST = /^sha256:([0-9a-f]{64})$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const PLATFORMS = Object.freeze(["linux", "windows"]);
+const MINIMUM_VERSION = Object.freeze([0, 11, 0]);
 
 function fail(message) {
   throw new Error(message);
@@ -31,8 +32,9 @@ function exactKeys(value, expected, message) {
 
 function versionTuple(value) {
   const match = typeof value === "string" ? VERSION.exec(value) : undefined;
-  if (!match || match[1] !== "0" || match[2] !== "9") return undefined;
-  return match.slice(1).map(Number);
+  if (!match) return undefined;
+  const tuple = match.slice(1).map(Number);
+  return compareVersion(tuple, MINIMUM_VERSION) >= 0 ? tuple : undefined;
 }
 
 function compareVersion(left, right) {
@@ -132,7 +134,7 @@ export function selectPinnedRelease(releases) {
     })
     .filter(Boolean)
     .sort((left, right) => compareVersion(right.tuple, left.tuple));
-  if (candidates.length === 0) fail("no_immutable_docwen_0_9_release");
+  if (candidates.length === 0) fail("no_immutable_supported_docwen_release");
   if (candidates[1] && compareVersion(candidates[0].tuple, candidates[1].tuple) === 0) {
     fail("latest_docwen_release_ambiguous");
   }

@@ -161,6 +161,27 @@ describe("OpenClaw Artifact Bundle commit", () => {
     expect(await readFile(source, "utf8")).toBe("new");
   });
 
+  it("keeps a committed Bundle when old-backup cleanup fails", async () => {
+    const workspace = await root();
+    const output = path.join(workspace, "replace-output");
+    await mkdir(output);
+    await writeFile(path.join(output, "old.txt"), "old", "utf8");
+    const bundle = await oneArtifactBundle(workspace, "replacement", "new");
+    const warnings: string[] = [];
+
+    const committed = await clientTesting.atomicCommitBundle(bundle, output, true, {
+      cleanupBackup: async () => {
+        throw new Error("simulated cleanup failure");
+      },
+      onCleanupWarning: (warning) => warnings.push(warning),
+    });
+
+    expect(await readFile(committed.preferredArtifactPath, "utf8")).toBe("new");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("was committed");
+    expect((await readdir(workspace)).some((name) => name.includes(".docwen-backup-"))).toBe(true);
+  });
+
   it("fails a concurrent Bundle commit without clobbering the lock holder", async () => {
     const workspace = await root();
     const output = path.join(workspace, "shared-output");
@@ -269,6 +290,48 @@ describe("OpenClaw Artifact Bundle commit", () => {
     expect((await readdir(workspace)).filter((name) => name.includes(".docwen-"))).toEqual([]);
   });
 
+  it("refuses an in-place replacement when the source changed after task preparation", async () => {
+    const workspace = await root();
+    const destination = path.join(workspace, "document.md");
+    const replacement = path.join(workspace, "replacement.md");
+    await writeFile(destination, "original", "utf8");
+    await writeFile(replacement, "replacement", "utf8");
+    const sourceVersion = expectedContent("original");
+
+    await writeFile(destination, "newer user content", "utf8");
+
+    await expect(
+      clientTesting.atomicReplaceFile(
+        destination,
+        replacement,
+        expectedContent("replacement"),
+        {},
+        sourceVersion,
+      ),
+    ).rejects.toMatchObject({ code: "docwen_source_changed" });
+    expect(await readFile(destination, "utf8")).toBe("newer user content");
+  });
+
+  it("keeps an in-place replacement when old-backup cleanup fails", async () => {
+    const workspace = await root();
+    const destination = path.join(workspace, "document.md");
+    const replacement = path.join(workspace, "replacement.md");
+    await writeFile(destination, "old", "utf8");
+    await writeFile(replacement, "new", "utf8");
+    const warnings: string[] = [];
+
+    await clientTesting.atomicReplaceFile(destination, replacement, expectedContent("new"), {
+      cleanupBackup: async () => {
+        throw new Error("simulated cleanup failure");
+      },
+      onCleanupWarning: (warning) => warnings.push(warning),
+    });
+
+    expect(await readFile(destination, "utf8")).toBe("new");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("was committed");
+  });
+
   it("detects an in-place target mutation immediately before replacement", async () => {
     const workspace = await root();
     const destination = path.join(workspace, "document.md");
@@ -288,6 +351,66 @@ describe("OpenClaw Artifact Bundle commit", () => {
     expect(clientTesting.parsePageSelection("1-3,5,7-8")).toEqual([1, 2, 3, 5, 7, 8]);
     expect(() => clientTesting.parsePageSelection("1-3,3")).toThrow("PDF page is selected twice");
     expect(() => clientTesting.parsePageSelection("4-2")).toThrow("Invalid PDF page range");
+  });
+});
+
+describe("capability-driven conversion options", () => {
+  const capability = (properties: Record<string, unknown>) =>
+    clientTesting.parseCapability({
+      capability_id: "convert.test.to_markdown",
+      operation: "convert",
+      input_shape: {
+        slots: [{ role: "source", kind: "document", media_types: ["application/pdf"], min_items: 1, max_items: 1 }],
+        undeclared_roles: "reject",
+      },
+      output_media_types: ["text/markdown"],
+      output_shape: {
+        cardinality: "one",
+        artifact_kinds: ["document"],
+        relation_types: [],
+        atomic_bundle: true,
+      },
+      options_schema: { type: "object", properties, additionalProperties: false },
+      availability: "available",
+      dependencies: [],
+      limitations: [],
+    });
+
+  it("maps semantic OCR and resource preferences to the selected capability contract", () => {
+    const modern = capability({
+      recognize_text: { type: "boolean" },
+      preserve_resources: { type: "boolean" },
+      image_mode: { type: "string", enum: ["file"] },
+      ocr_language: { type: "string" },
+    });
+    expect(
+      clientTesting.buildConversionOptions(modern, {
+        ocr: true,
+        keepImages: false,
+        ocrLanguage: "chi_sim",
+      }),
+    ).toEqual({
+      recognize_text: true,
+      preserve_resources: false,
+      ocr_language: "chi_sim",
+    });
+
+    const legacy = capability({
+      to_md_enable_ocr: { type: "boolean" },
+      to_md_keep_images: { type: "boolean" },
+      image_mode: { type: "string", enum: ["file", "omit"] },
+    });
+    expect(clientTesting.buildConversionOptions(legacy, { ocr: false, keepImages: true })).toEqual({
+      to_md_enable_ocr: false,
+      to_md_keep_images: true,
+      image_mode: "file",
+    });
+  });
+
+  it("rejects an explicitly requested option that the capability does not expose", () => {
+    expect(() => clientTesting.buildConversionOptions(capability({}), { ocr: true })).toThrow(
+      "does not support the requested ocr option",
+    );
   });
 });
 
