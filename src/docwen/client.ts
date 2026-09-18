@@ -282,33 +282,113 @@ async function convert(
       `No unique available DocWen conversion accepts the supplied typed inputs and produces ${outputMediaType}.`,
     );
   }
-  const options: JsonObject = {};
-  const template = optionalString(params, "template");
-  if (template) options.template_name = template;
-  const keepImages = optionalBoolean(params, "keepImages");
-  if (keepImages !== undefined) {
-    options.to_md_keep_images = keepImages;
-    options.image_mode = keepImages ? "file" : "omit";
-  }
-  const ocr = optionalBoolean(params, "ocr");
-  if (ocr !== undefined) options.to_md_enable_ocr = ocr;
-  const ocrLanguage = optionalString(params, "ocrLanguage");
-  if (ocrLanguage) options.ocr_language = ocrLanguage;
-  const removeNumbering = optionalBoolean(params, "removeNumbering");
-  if (removeNumbering !== undefined) options.remove_numbering = removeNumbering;
-  const addNumbering = optionalBoolean(params, "addNumbering");
-  if (addNumbering !== undefined) options.add_numbering = addNumbering;
-  const numberingScheme = optionalString(params, "numberingScheme");
-  if (numberingScheme) options.numbering_scheme = numberingScheme;
+  const capability = matches[0]!;
+  const options = buildConversionOptions(capability, params);
   return persistentTask(
     binaryPath,
-    matches[0]!.capability_id,
+    capability.capability_id,
     inputs,
     options,
     params,
     config,
     signal,
     preparedInputs,
+    capability,
+  );
+}
+
+function buildConversionOptions(capability: MachineCapability, params: Params): JsonObject {
+  const options: JsonObject = {};
+  const template = optionalString(params, "template");
+  if (template) setSupportedOption(capability, options, ["template_name"], template, "template");
+
+  const keepImages = optionalBoolean(params, "keepImages");
+  if (keepImages !== undefined) {
+    const mapped = setSupportedOption(
+      capability,
+      options,
+      ["preserve_resources", "to_md_keep_images"],
+      keepImages,
+      "keepImages",
+      false,
+    );
+    const imageMode = capabilityOptionSchema(capability, "image_mode");
+    if (imageMode) {
+      const requestedMode = keepImages ? "file" : "omit";
+      if (optionAllowsValue(imageMode, requestedMode)) {
+        options.image_mode = requestedMode;
+      } else if (!mapped) {
+        throw unsupportedCapabilityOption(capability, "keepImages");
+      }
+    } else if (!mapped) {
+      throw unsupportedCapabilityOption(capability, "keepImages");
+    }
+  }
+
+  const ocr = optionalBoolean(params, "ocr");
+  if (ocr !== undefined) {
+    setSupportedOption(
+      capability,
+      options,
+      ["recognize_text", "to_md_enable_ocr"],
+      ocr,
+      "ocr",
+    );
+  }
+
+  const ocrLanguage = optionalString(params, "ocrLanguage");
+  if (ocrLanguage) setSupportedOption(capability, options, ["ocr_language"], ocrLanguage, "ocrLanguage");
+
+  const removeNumbering = optionalBoolean(params, "removeNumbering");
+  if (removeNumbering !== undefined) {
+    setSupportedOption(capability, options, ["remove_numbering"], removeNumbering, "removeNumbering");
+  }
+
+  const addNumbering = optionalBoolean(params, "addNumbering");
+  if (addNumbering !== undefined) {
+    setSupportedOption(capability, options, ["add_numbering"], addNumbering, "addNumbering");
+  }
+
+  const numberingScheme = optionalString(params, "numberingScheme");
+  if (numberingScheme) {
+    setSupportedOption(capability, options, ["numbering_scheme"], numberingScheme, "numberingScheme");
+  }
+  return options;
+}
+
+function setSupportedOption(
+  capability: MachineCapability,
+  options: JsonObject,
+  names: readonly string[],
+  value: string | boolean,
+  parameter: string,
+  required = true,
+): boolean {
+  const name = names.find((candidate) => capabilityOptionSchema(capability, candidate) !== undefined);
+  if (!name) {
+    if (required) throw unsupportedCapabilityOption(capability, parameter);
+    return false;
+  }
+  options[name] = value;
+  return true;
+}
+
+function capabilityOptionSchema(capability: MachineCapability, name: string): JsonObject | undefined {
+  const properties = capability.options_schema.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return undefined;
+  const schema = (properties as JsonObject)[name];
+  return schema && typeof schema === "object" && !Array.isArray(schema) ? (schema as JsonObject) : undefined;
+}
+
+function optionAllowsValue(schema: JsonObject, value: string): boolean {
+  const allowed = schema.enum;
+  return !Array.isArray(allowed) || allowed.includes(value);
+}
+
+function unsupportedCapabilityOption(capability: MachineCapability, parameter: string): DocWenMachineError {
+  return new DocWenMachineError(
+    "docwen_option_unsupported",
+    `The selected DocWen capability does not support the requested ${parameter} option: ${capability.capability_id}`,
   );
 }
 
@@ -388,6 +468,7 @@ async function persistentTask(
   config: DocWenPluginConfig,
   signal?: AbortSignal,
   preparedInputs?: MachineInputHandle[],
+  preparedCapability?: MachineCapability,
 ): Promise<JsonObject> {
   const outputDir = requiredAbsolutePath(params, "outputDir");
   const overwrite = optionalBoolean(params, "overwrite") ?? false;
@@ -401,6 +482,7 @@ async function persistentTask(
     signal,
     true,
     preparedInputs,
+    preparedCapability,
   );
   try {
     const committed = await atomicCommitBundle(execution.completed.bundle, outputDir, overwrite);
@@ -425,12 +507,16 @@ async function executeTask(
   signal: AbortSignal | undefined,
   requireAvailable: boolean,
   preparedInputs?: MachineInputHandle[],
+  preparedCapability?: MachineCapability,
 ): Promise<TaskExecution> {
   const inputs = preparedInputs ?? (await buildInputHandles(inputSpecs));
   if (requireAvailable) {
-    const capability = (await discoverCapabilities(binaryPath, config, signal)).find(
-      (item) => item.capability_id === capabilityId,
-    );
+    const capability =
+      preparedCapability?.capability_id === capabilityId
+        ? preparedCapability
+        : (await discoverCapabilities(binaryPath, config, signal)).find(
+            (item) => item.capability_id === capabilityId,
+          );
     if (!capability || capability.availability === "unavailable") {
       throw new DocWenMachineError(
         "docwen_capability_unavailable",
