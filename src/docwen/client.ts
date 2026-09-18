@@ -449,6 +449,7 @@ async function numberMarkdown(
     true,
     preparedInputs,
   );
+  const warnings: string[] = [];
   try {
     const preferred = preferredArtifact(execution.completed.bundle);
     if (preferred.kind !== "document" || preferred.media_type !== MARKDOWN_MEDIA_TYPE) {
@@ -464,12 +465,21 @@ async function numberMarkdown(
         sizeBytes: preferred.size_bytes,
         sha256: preferred.sha256,
       },
-      {},
+      { onCleanupWarning: (warning) => warnings.push(warning) },
       sourceVersion,
     );
-    return taskResult(execution.completed, path.dirname(committedPath), [committedPath], committedPath, true);
-  } finally {
-    await rm(execution.temporaryRoot, { recursive: true, force: true });
+    await cleanupTaskRoot(execution.temporaryRoot, warnings);
+    return taskResult(
+      execution.completed,
+      path.dirname(committedPath),
+      [committedPath],
+      committedPath,
+      true,
+      warnings,
+    );
+  } catch (error) {
+    await rm(execution.temporaryRoot, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
   }
 }
 
@@ -498,17 +508,23 @@ async function persistentTask(
     preparedInputs,
     preparedCapability,
   );
+  const warnings: string[] = [];
   try {
-    const committed = await atomicCommitBundle(execution.completed.bundle, outputDir, overwrite);
+    const committed = await atomicCommitBundle(execution.completed.bundle, outputDir, overwrite, {
+      onCleanupWarning: (warning) => warnings.push(warning),
+    });
+    await cleanupTaskRoot(execution.temporaryRoot, warnings);
     return taskResult(
       execution.completed,
       outputDir,
       committed.artifactPaths,
       committed.preferredArtifactPath,
       false,
+      warnings,
     );
-  } finally {
-    await rm(execution.temporaryRoot, { recursive: true, force: true });
+  } catch (error) {
+    await rm(execution.temporaryRoot, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
   }
 }
 
@@ -1356,6 +1372,7 @@ function taskResult(
   artifactPaths: string[],
   preferredArtifactPath: string,
   inPlace: boolean,
+  warnings: readonly string[] = [],
 ): JsonObject {
   return {
     task_id: completed.taskId,
@@ -1369,7 +1386,16 @@ function taskResult(
     bundle: serializableBundle(completed.bundle),
     diagnostics: completed.diagnostics,
     metrics: completed.metrics,
+    ...(warnings.length > 0 ? { warnings: [...warnings] } : {}),
   };
+}
+
+async function cleanupTaskRoot(temporaryRoot: string, warnings: string[]): Promise<void> {
+  try {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  } catch (error) {
+    warnings.push(`The task completed, but its temporary files could not be removed: ${errorMessage(error)}`);
+  }
 }
 
 function assertSafeDestination(destination: string): void {
