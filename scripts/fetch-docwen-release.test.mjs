@@ -86,13 +86,13 @@ describe("pinned DocWen release selection", () => {
   });
 
   it("ignores releases below the supported packaged baseline", () => {
-    expect(() => selectPinnedRelease([release("0.9.9"), release("0.10.99")])).toThrow(
+    expect(() => selectPinnedRelease([release("0.9.9"), release("0.10.99"), release("0.11.99")])).toThrow(
       "no_immutable_supported_docwen_release",
     );
   });
 
   it("rejects extra fields and asset URLs outside the exact DocWen API identity", () => {
-    const record = selectPinnedRelease([release("0.11.0")]);
+    const record = selectPinnedRelease([release("0.12.0")]);
     expect(() => validatePinnedRecord({ ...record, legacy: true })).toThrow("docwen_pin_keys_invalid");
     const tampered = JSON.parse(JSON.stringify(record));
     tampered.assets.windows.apiUrl = "https://example.invalid/archive.zip";

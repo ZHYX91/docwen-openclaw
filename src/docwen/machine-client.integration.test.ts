@@ -36,7 +36,7 @@ const planInput = {
   sha256: createHash("sha256").update(PLAN_JSON).digest("hex"),
 };
 
-describe.skipIf(!candidate)("DocWen Machine Protocol v1 packaged exact-two client", () => {
+describe.skipIf(!candidate)("DocWen Machine Protocol v2 packaged exact-two client", () => {
   it("round-trips a resolved document and DOCX through the packaged machine protocol", async () => {
     const binaryPath = await resolveDocWenBinary(candidate!);
     const root = await mkdtemp(join(tmpdir(), "docwen-machine-client-"));

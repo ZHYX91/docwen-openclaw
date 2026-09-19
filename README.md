@@ -1,6 +1,6 @@
 # DocWen for OpenClaw
 
-Typed OpenClaw tools for DocWen Machine Protocol v1 and verified `docwen.artifact_bundle.v2` output graphs.
+Typed OpenClaw tools for DocWen Machine Protocol v2 and verified `docwen.artifact_bundle.v2` output graphs.
 
 > Version 2.0.0 is published as an [immutable GitHub Release](https://github.com/ZHYX91/docwen-openclaw/releases/tag/2.0.0).
 
@@ -86,7 +86,7 @@ openclaw plugins install ./openclaw-docwen-2.0.0.tgz
 - `src/config.ts`: strict plugin configuration schema.
 - `src/tools/`: tool catalog and parameter schemas.
 - `src/docwen/machine-framing.ts`: canonical Content-Length framing.
-- `src/docwen/machine-client.ts`: Machine v1 lifecycle, cancellation, and strict Bundle validation.
+- `src/docwen/machine-client.ts`: Machine v2 lifecycle, cancellation, and strict Bundle validation.
 - `src/docwen/client.ts`: capability selection plus consumer-owned transactional commits.
 - `src/process/runner.ts`: process-tree termination for cancellation and failure containment.
 - `skills/docwen/SKILL.md`: model-facing usage and safety rules.

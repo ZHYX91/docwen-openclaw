@@ -35,7 +35,7 @@ async function oneArtifactBundle(
     schema: "docwen.artifact_bundle.v2",
     bundle_id: `bundle.${name}`,
     task_id: `task.${name}`,
-    producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v1" },
+    producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },
     layout_schema: "docwen.artifact_layout.v1",
     artifacts: [
       {
@@ -88,7 +88,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
       schema: "docwen.artifact_bundle.v2",
       bundle_id: "bundle.test",
       task_id: "task.test",
-      producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v1" },
+      producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },
       layout_schema: "docwen.artifact_layout.v1",
       artifacts: [
         {
@@ -148,7 +148,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
       schema: "docwen.artifact_bundle.v2",
       bundle_id: "bundle.empty",
       task_id: "task.empty",
-      producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v1" },
+      producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },
       layout_schema: "docwen.artifact_layout.v1",
       artifacts: [],
       entries: [],
@@ -360,7 +360,9 @@ describe("capability-driven conversion options", () => {
       capability_id: "convert.test.to_markdown",
       operation: "convert",
       input_shape: {
-        slots: [{ role: "source", kind: "document", media_types: ["application/pdf"], min_items: 1, max_items: 1 }],
+        slots: [
+          { role: "source", kind: "document", media_types: ["application/pdf"], min_items: 1, max_items: 1 },
+        ],
         undeclared_roles: "reject",
       },
       output_media_types: ["text/markdown"],
@@ -629,5 +631,51 @@ describe("typed Machine input construction", () => {
     expect(() => clientTesting.parseCapability(withoutLimitations)).toThrow(
       "capability.limitations must be an object array",
     );
+  });
+});
+
+describe("template discovery contract", () => {
+  const template = {
+    id: `template.docx.${"a".repeat(64)}`,
+    target: "docx",
+    name: "Standard",
+    description: "",
+    origin: "builtin",
+    is_default: false,
+  };
+
+  it("preserves server order and allows duplicate display names with distinct IDs", () => {
+    const items = [
+      { ...template, id: `template.docx.${"b".repeat(64)}`, origin: "custom", is_default: true },
+      template,
+    ];
+    const before = structuredClone(items);
+    clientTesting.validateTemplateResources(items, "docx");
+    expect(items).toEqual(before);
+  });
+
+  it.each([
+    { origin: undefined },
+    { origin: "local" },
+    { is_default: undefined },
+    { is_default: "false" },
+    { id: "Standard" },
+    { target: "xlsx" },
+    { name: undefined },
+  ])("rejects malformed template metadata %j", (change) => {
+    expect(() => clientTesting.validateTemplateResources([{ ...template, ...change }])).toThrow(
+      "Invalid or ambiguous template resource metadata",
+    );
+  });
+
+  it("rejects duplicate IDs, multiple defaults, and mismatched requested format", () => {
+    expect(() => clientTesting.validateTemplateResources([template, template])).toThrow();
+    expect(() =>
+      clientTesting.validateTemplateResources([
+        { ...template, is_default: true },
+        { ...template, id: `template.docx.${"b".repeat(64)}`, is_default: true },
+      ]),
+    ).toThrow();
+    expect(() => clientTesting.validateTemplateResources([template], "xlsx")).toThrow();
   });
 });

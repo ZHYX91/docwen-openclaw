@@ -13,7 +13,7 @@ const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const DIGEST = /^sha256:([0-9a-f]{64})$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const PLATFORMS = Object.freeze(["linux", "windows"]);
-const MINIMUM_VERSION = Object.freeze([0, 11, 0]);
+const MINIMUM_VERSION = Object.freeze([0, 12, 0]);
 
 function fail(message) {
   throw new Error(message);

@@ -71,7 +71,7 @@ describe("release governance", () => {
     const source = readFileSync("scripts/fetch-docwen-release.mjs", "utf8");
 
     expect(source).toContain("release.immutable !== true");
-    expect(source).toContain("MINIMUM_VERSION = Object.freeze([0, 11, 0])");
+    expect(source).toContain("MINIMUM_VERSION = Object.freeze([0, 12, 0])");
     expect(source).toContain("compareVersion(tuple, MINIMUM_VERSION) >= 0");
     expect(source).toContain('PIN_SCHEMA = "docwen.openclaw.core_release.v2"');
     expect(source).toContain('"DocWen-windows-x64.zip"');

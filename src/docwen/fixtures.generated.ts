@@ -1,4 +1,4 @@
-// GENERATED from DocWen Machine Protocol v1 conformance fixtures; consumer-specific input IDs are normalized here.
+// GENERATED from DocWen Machine Protocol v2 conformance fixtures; consumer-specific input IDs are normalized here.
 export const EXACT_TWO_MARKDOWN_TO_DOCX_CAPABILITY = {
   capability_id: "convert.markdown.to_docx",
   operation: "convert",

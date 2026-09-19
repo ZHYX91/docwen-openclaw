@@ -193,13 +193,49 @@ async function resources(
   if (target) queryParams.target = target;
   if (config.language && config.language !== "auto") queryParams.locale = config.language;
   const result = (await query(binaryPath, "resource/list", queryParams, config, signal)).result;
+  if (result.kind !== queryParams.kind) {
+    throw new DocWenMachineError(
+      "docwen_machine_protocol_error",
+      "Resource response kind does not match the request.",
+    );
+  }
+  const items = objectArray(result.resources, "resource/list.resources");
+  if (result.kind === "templates") validateTemplateResources(items, target);
   const requestedId = optionalString(params, "id");
   if (!requestedId) return result;
-  const items = objectArray(result.resources, "resource/list.resources");
   const resource = items.find((item) => item.id === requestedId);
   if (!resource)
     throw new DocWenMachineError("docwen_resource_not_found", `Unknown DocWen resource: ${requestedId}`);
   return { kind: result.kind, resource };
+}
+
+function validateTemplateResources(items: JsonObject[], target?: string): void {
+  const ids = new Set<string>();
+  const defaults = new Set<string>();
+  for (const item of items) {
+    const id = item.id;
+    const itemTarget = item.target;
+    if (
+      typeof id !== "string" ||
+      !/^template\.(?:docx|xlsx)\.[0-9a-f]{64}$/u.test(id) ||
+      (itemTarget !== "docx" && itemTarget !== "xlsx") ||
+      !id.startsWith(`template.${itemTarget}.`) ||
+      (target !== undefined && itemTarget !== target) ||
+      typeof item.name !== "string" ||
+      typeof item.description !== "string" ||
+      (item.origin !== "builtin" && item.origin !== "custom") ||
+      typeof item.is_default !== "boolean" ||
+      ids.has(id) ||
+      (item.is_default && defaults.has(itemTarget))
+    ) {
+      throw new DocWenMachineError(
+        "docwen_machine_protocol_error",
+        "Invalid or ambiguous template resource metadata.",
+      );
+    }
+    ids.add(id);
+    if (item.is_default) defaults.add(itemTarget);
+  }
 }
 
 async function validateMarkdown(
@@ -333,13 +369,7 @@ function buildConversionOptions(capability: MachineCapability, params: Params): 
 
   const ocr = optionalBoolean(params, "ocr");
   if (ocr !== undefined) {
-    setSupportedOption(
-      capability,
-      options,
-      ["recognize_text", "to_md_enable_ocr"],
-      ocr,
-      "ocr",
-    );
+    setSupportedOption(capability, options, ["recognize_text", "to_md_enable_ocr"], ocr, "ocr");
   }
 
   const ocrLanguage = optionalString(params, "ocrLanguage");
@@ -1075,7 +1105,10 @@ async function atomicReplaceFile(
     async () => {
       const existing = await lstat(destination, { bigint: true });
       if (!existing.isFile() || existing.isSymbolicLink()) {
-        throw new DocWenMachineError("docwen_input_not_regular_file", "In-place target is not a regular file.");
+        throw new DocWenMachineError(
+          "docwen_input_not_regular_file",
+          "In-place target is not a regular file.",
+        );
       }
       const expectedDestination = expectedSource
         ? await assertSourceVersionUnchanged(destination, existing, expectedSource)
@@ -1173,7 +1206,9 @@ async function withDestinationLock<T>(
     throw bodyFailure;
   }
   if (cleanupFailure) {
-    onCleanupWarning?.(`The operation succeeded, but its output lock could not be removed: ${errorMessage(cleanupFailure)}`);
+    onCleanupWarning?.(
+      `The operation succeeded, but its output lock could not be removed: ${errorMessage(cleanupFailure)}`,
+    );
   }
   return bodyResult as T;
 }
@@ -1547,6 +1582,10 @@ function isErrno(error: unknown, code: string): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function isNotFound(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
@@ -1565,4 +1604,5 @@ export const clientTesting = {
   parseCapability,
   requiredInputArray,
   validateLogicalPath,
+  validateTemplateResources,
 };

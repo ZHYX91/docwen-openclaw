@@ -18,6 +18,7 @@ const { spawnMock, terminateProcessTreeMock, serverState } = vi.hoisted(() => ({
     cancelRequests: 0,
     corruptHash: false,
     executeSeen: false,
+    requests: [] as JsonObject[],
   },
 }));
 
@@ -78,11 +79,24 @@ class FakeChild extends EventEmitter {
 
   private handle(message: JsonObject): void {
     const id = message.id;
+    serverState.requests.push(message);
     if (message.method === "initialize") {
+      if (serverState.behavior === "reject_initialize") {
+        queueMicrotask(() =>
+          this.stdout.write(
+            encodeMachineFrame({ jsonrpc: "2.0", id, error: { code: -32602, message: "Invalid params" } }),
+          ),
+        );
+        return;
+      }
       if (serverState.behavior === "hang_initialize") return;
       this.reply(id, {
-        protocol: { name: "docwen.machine", major: 1, minor: 0 },
-        server: { name: "DocWen", version: "0.9.0" },
+        protocol: {
+          name: "docwen.machine",
+          major: serverState.behavior === "legacy_protocol" ? 1 : 2,
+          minor: serverState.behavior === "future_minor" ? 1 : 0,
+        },
+        server: { name: serverState.behavior === "wrong_server" ? "Other" : "DocWen", version: "0.9.0" },
         methods: [],
         features: { progress: true, cancellation: true },
         artifact_bundle_schema:
@@ -138,7 +152,7 @@ class FakeChild extends EventEmitter {
             schema: "docwen.artifact_bundle.v2",
             bundle_id: "bundle.1",
             task_id: "task.1",
-            producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v1" },
+            producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },
             layout_schema: "docwen.artifact_layout.v1",
             artifacts: [
               {
@@ -200,7 +214,7 @@ function bundle(artifacts: JsonObject[], entries: JsonObject[], relations: JsonO
     schema: "docwen.artifact_bundle.v2",
     bundle_id: "bundle.graph",
     task_id: "task.graph",
-    producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v1" },
+    producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },
     layout_schema: "docwen.artifact_layout.v1",
     artifacts,
     entries,
@@ -254,10 +268,11 @@ describe("DocWen Machine Protocol client", () => {
     serverState.cancelRequests = 0;
     serverState.corruptHash = false;
     serverState.executeSeen = false;
+    serverState.requests = [];
     spawnMock.mockImplementation(() => new FakeChild());
   });
 
-  it("initializes Machine v1 and performs a framed query", async () => {
+  it("initializes Machine v2 and performs a framed query", async () => {
     const response = await runDocWenMachineQuery({
       binaryPath: "C:\\DocWen\\DocWenCLI.exe",
       method: "health/check",
@@ -271,6 +286,25 @@ describe("DocWen Machine Protocol client", () => {
       expect.objectContaining({ shell: false, windowsHide: true }),
     );
   });
+
+  it.each(["legacy_protocol", "future_minor", "reject_initialize", "wrong_server"])(
+    "rejects %s before sending a resource or task request",
+    async (behavior) => {
+      serverState.behavior = behavior;
+      await expect(
+        runDocWenMachineQuery({
+          binaryPath: "C:\\DocWen\\DocWenCLI.exe",
+          method: "resource/list",
+          params: { kind: "templates" },
+          timeoutMs: 1_000,
+        }),
+      ).rejects.toMatchObject({ code: "docwen_machine_incompatible_version" });
+      expect(serverState.requests.map((request) => request.method)).toEqual(["initialize"]);
+      expect(serverState.requests[0]!.params).toMatchObject({
+        protocol: { name: "docwen.machine", major: 2, minor: 0 },
+      });
+    },
+  );
 
   it("rejects a Machine server that does not declare Artifact Bundle v2", async () => {
     serverState.behavior = "bundle_v1";
@@ -389,7 +423,7 @@ describe("DocWen Machine Protocol client", () => {
       schema: "docwen.artifact_bundle.v2",
       bundle_id: "bundle.v2",
       task_id: "task.graph",
-      producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v1" },
+      producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },
       layout_schema: "docwen.document_node.v1",
       artifacts: [document, manifest],
       entries: [{ artifact_id: "document.1", role: "primary", ordinal: 0, preferred: true }],
