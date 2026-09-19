@@ -24,7 +24,7 @@ async function candidateEnvironment() {
     DOCWEN_TEST_BINARY: binaryPath,
     DOCWEN_TEST_SHA256: createHash("sha256").update(contents).digest("hex"),
     DOCWEN_TEST_SIZE_BYTES: String(contents.length),
-    DOCWEN_TEST_VERSION: "0.9.0",
+    DOCWEN_TEST_VERSION: "0.12.0",
   };
 }
 
@@ -36,13 +36,16 @@ describe("packaged DocWen acceptance identity", () => {
     expect(candidate.binaryPath).toBe(await realpath(environment.DOCWEN_TEST_BINARY));
     expect(candidate.sha256).toBe(environment.DOCWEN_TEST_SHA256);
     expect(candidate.sizeBytes).toBe(Number(environment.DOCWEN_TEST_SIZE_BYTES));
-    expect(candidate.productVersion).toBe("0.9.0");
+    expect(candidate.productVersion).toBe("0.12.0");
   });
 
   it.each([
     ["DOCWEN_TEST_SHA256", "0".repeat(64), "docwen_acceptance_sha256_mismatch"],
     ["DOCWEN_TEST_SIZE_BYTES", "1", "docwen_acceptance_size_mismatch"],
     ["DOCWEN_TEST_VERSION", "0.10.0", "docwen_acceptance_version_invalid"],
+    ["DOCWEN_TEST_VERSION", "0.11.99", "docwen_acceptance_version_invalid"],
+    ["DOCWEN_TEST_VERSION", "0.12.0-rc1", "docwen_acceptance_version_invalid"],
+    ["DOCWEN_TEST_VERSION", "9007199254740992.0.0", "docwen_acceptance_version_invalid"],
   ])("rejects a mismatched %s", async (name, value, message) => {
     const environment = await candidateEnvironment();
     environment[name] = value;

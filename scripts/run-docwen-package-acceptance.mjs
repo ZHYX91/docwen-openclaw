@@ -5,9 +5,9 @@ import { lstat, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
+import { isSupportedDocWenVersion } from "./fetch-docwen-release.mjs";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
-const VERSION_PATTERN = /^0\.9\.(?:0|[1-9]\d*)$/u;
 const RAW_ACCEPTANCE_ENVIRONMENT = Object.freeze([
   "DOCWEN_MACHINE_D2_CANDIDATE",
   "DOCWEN_TEST_BINARY",
@@ -33,7 +33,7 @@ export async function validateDocWenPackageCandidate(environment) {
   if (!Number.isSafeInteger(expectedSize) || expectedSize <= 0) {
     throw new Error("docwen_acceptance_size_invalid");
   }
-  if (!VERSION_PATTERN.test(productVersion)) throw new Error("docwen_acceptance_version_invalid");
+  if (!isSupportedDocWenVersion(productVersion)) throw new Error("docwen_acceptance_version_invalid");
 
   const sourceInfo = await lstat(binaryPath);
   if (sourceInfo.isSymbolicLink() || !sourceInfo.isFile())

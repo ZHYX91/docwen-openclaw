@@ -24,13 +24,11 @@ env:
 
 jobs:
   build-release:
-    name: Clean release build ${{ matrix.replica }}
+    name: Verified release build
+    outputs:
+      artifact_id: ${{ steps.build.outputs.artifact-id }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        replica: [a, b]
     steps:
       - name: Check out exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -72,18 +70,19 @@ jobs:
       - name: Install exact lockfile and run the full gate
         run: |
           npm ci
-          npm run check
+          npm run check:source
       - name: Build and verify the deterministic release candidate
         run: npm run release:build -- "$RUNNER_TEMP/release"
-      - name: Upload clean-build evidence
+      - name: Upload the verified candidate
+        id: build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: openclaw-docwen-build-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.replica }}
+          name: openclaw-docwen-build-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/release/
           compression-level: 0
           if-no-files-found: error
           overwrite: false
-          retention-days: 1
+          retention-days: 30
 
   resolve-docwen:
     name: Resolve one immutable DocWen Core release
@@ -114,7 +113,7 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           overwrite: false
-          retention-days: 1
+          retention-days: 30
 
   packaged-docwen:
     name: Immutable DocWen package on ${{ matrix.platform }}
@@ -151,8 +150,9 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           artifact-ids: ${{ needs.resolve-docwen.outputs.artifact_id }}
+          digest-mismatch: error
           path: ${{ runner.temp }}/docwen-core-pin
-      - name: Download the pinned immutable numeric DocWen 0.9 package
+      - name: Download the pinned immutable DocWen package
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/fetch-docwen-release.mjs fetch ${{ matrix.platform }} "${{ runner.temp }}/docwen-core" "${{ runner.temp }}/docwen-core-pin/DOCWEN-CORE.json"
@@ -200,30 +200,25 @@ jobs:
       artifact_id: ${{ steps.publication.outputs.artifact-id }}
       artifact_digest: ${{ steps.publication.outputs.artifact-digest }}
     steps:
-      - name: Download build A
+      - name: Download the exact verified build
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: openclaw-docwen-build-${{ github.run_id }}-${{ github.run_attempt }}-a
-          path: builds/a
-      - name: Download build B
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: openclaw-docwen-build-${{ github.run_id }}-${{ github.run_attempt }}-b
-          path: builds/b
+          artifact-ids: ${{ needs.build-release.outputs.artifact_id }}
+          path: builds/candidate
+          digest-mismatch: error
       - name: Download the exact current-run DocWen dependency record
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           artifact-ids: ${{ needs.resolve-docwen.outputs.artifact_id }}
+          digest-mismatch: error
           path: dependency
-      - name: Compare independent clean builds
+      - name: Verify and assemble the exact publication assets
         shell: bash
         run: |
           set -euo pipefail
-          cmp "builds/a/openclaw-docwen-${RELEASE_VERSION}.tgz" "builds/b/openclaw-docwen-${RELEASE_VERSION}.tgz"
-          cmp builds/a/SHA256SUMS builds/b/SHA256SUMS
-          (cd builds/a && sha256sum --check SHA256SUMS)
+          (cd builds/candidate && sha256sum --check SHA256SUMS)
           mkdir publication
-          cp "builds/a/openclaw-docwen-${RELEASE_VERSION}.tgz" publication/
+          cp "builds/candidate/openclaw-docwen-${RELEASE_VERSION}.tgz" publication/
           cp dependency/DOCWEN-CORE.json publication/
           (
             cd publication
@@ -240,7 +235,7 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           overwrite: false
-          retention-days: 1
+          retention-days: 30
       - name: Preflight completed without publishing
         if: github.event_name == 'workflow_dispatch'
         run: echo "Release preflight passed for ${RELEASE_VERSION}; no tag or Release was created."
@@ -260,6 +255,7 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           artifact-ids: ${{ needs.verify-release.outputs.artifact_id }}
+          digest-mismatch: error
           path: publication
       - name: Verify fixed assets
         shell: bash

@@ -59,11 +59,11 @@ npx openclaw plugins validate --root . --entry ./dist/index.js
 
 Use `openclaw-config.example.json5` as the configuration shape.
 
-Final packaged-D2 acceptance uses `npm run acceptance:docwen-package`. It requires the exact extracted `DocWenCLI` path plus its SHA-256, byte size, and stable 0.9.x version through `DOCWEN_TEST_BINARY`, `DOCWEN_TEST_SHA256`, `DOCWEN_TEST_SIZE_BYTES`, and `DOCWEN_TEST_VERSION`; the wrapper revalidates the candidate before and after the real Machine round trip.
+Final packaged-D2 acceptance uses `npm run acceptance:docwen-package`. It requires the exact extracted `DocWenCLI` path plus its SHA-256, byte size, and stable version at least 0.12.0 through `DOCWEN_TEST_BINARY`, `DOCWEN_TEST_SHA256`, `DOCWEN_TEST_SIZE_BYTES`, and `DOCWEN_TEST_VERSION`; the wrapper revalidates the candidate before and after the real Machine round trip.
 
 ## Release asset
 
-Maintainers create the 2.0.0 candidate in an explicit directory outside the repository; the command performs two isolated clean builds and actual `npm pack` runs, rejects non-identical tarballs, verifies the complete archive, and writes a stable checksum manifest.
+Maintainers create the 2.0.0 candidate in an explicit directory outside the repository; the command compiles once in an owned temporary directory, runs actual `npm pack`, verifies the complete archive, and writes a stable checksum manifest. Successful work is removed; failed work retains a process-bound lease under the workspace temp directory (or `build` in a standalone clone). CI and release share `check:source` and then this single package build. Build artifacts transfer by exact ID with digest mismatch rejection; reproducibility comparisons are optional engineering checks.
 
 ```bash
 npm run release:build -- /absolute/path/to/new-output-directory
@@ -75,7 +75,7 @@ The local command creates exactly these release-build outputs:
 - `SHA256SUMS`
 
 The immutable GitHub Release additionally publishes `DOCWEN-CORE.json`. That canonical record pins
-one DocWen 0.9.x tag and the exact Linux and Windows asset identities, sizes, and SHA-256 digests used
+one supported numeric DocWen tag and the exact Linux and Windows asset identities, sizes, and SHA-256 digests used
 by both packaged acceptance jobs. The published `SHA256SUMS` covers both the plugin tarball and this
 dependency record.
 

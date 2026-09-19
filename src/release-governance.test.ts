@@ -28,7 +28,10 @@ describe("release governance", () => {
     expect(releaseState).toBeDefined();
     if (releaseState === undefined) throw new Error("release-state step is missing");
 
-    expect(workflow).toContain("replica: [a, b]");
+    expect(workflow).not.toContain("replica:");
+    expect(workflow).toContain("npm run check:source");
+    expect(workflow).toContain("artifact-ids: ${{ needs.build-release.outputs.artifact_id }}");
+    expect(workflow).toContain("digest-mismatch: error");
     expect(workflow).toContain("needs: [build-release, resolve-docwen, packaged-docwen]");
     expect(workflow).toContain("scripts/fetch-docwen-release.mjs resolve");
     expect(workflow).toContain("scripts/fetch-docwen-release.mjs fetch");

@@ -334,12 +334,6 @@ export function verifyTarballBuffer(tarball, expectedReport) {
   return { sha256, entries: parsed.entries };
 }
 
-export function assertIdenticalReleaseTarballs(first, second) {
-  if (!Buffer.isBuffer(first) || !Buffer.isBuffer(second) || !first.equals(second)) {
-    fail("release_tarball_nondeterministic");
-  }
-}
-
 export function formatSha256Sums(sha256) {
   if (!/^[a-f0-9]{64}$/.test(sha256)) fail("release_sha256_invalid");
   return `${sha256}  ${RELEASE_TARBALL_FILENAME}\n`;
@@ -424,11 +418,11 @@ function walkRegularFiles(root, current = root) {
   return result;
 }
 
-export function buildIsolatedReleasePass(repoRoot, passRoot, npmCli) {
-  const packageRoot = join(passRoot, "package");
-  const packDestination = join(passRoot, "pack");
-  const temporaryDirectory = join(passRoot, "tmp");
-  const npmCache = join(passRoot, "npm-cache");
+export function buildReleaseCandidate(repoRoot, workRoot, npmCli) {
+  const packageRoot = join(workRoot, "package");
+  const packDestination = join(workRoot, "pack");
+  const temporaryDirectory = join(workRoot, "tmp");
+  const npmCache = join(workRoot, "npm-cache");
   mkdirSync(packageRoot, { recursive: true });
   mkdirSync(temporaryDirectory, { recursive: true });
   mkdirSync(npmCache, { recursive: true });
@@ -441,6 +435,7 @@ export function buildIsolatedReleasePass(repoRoot, passRoot, npmCli) {
     ...process.env,
     TEMP: temporaryDirectory,
     TMP: temporaryDirectory,
+    TMPDIR: temporaryDirectory,
     npm_config_cache: npmCache,
   };
   runChecked(

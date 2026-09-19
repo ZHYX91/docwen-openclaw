@@ -1,14 +1,16 @@
 import console from "node:console";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
 
 import { RELEASE_FILES, assertReleaseToolchain, packAndVerify } from "./release-package-lib.mjs";
+import { createReleaseWork, finishReleaseWork } from "./release-work.mjs";
 
 const npmCli = process.env.npm_execpath;
 assertReleaseToolchain(npmCli);
-const temporaryRoot = mkdtempSync(join(tmpdir(), "openclaw-package-check-"));
+const work = createReleaseWork(process.cwd());
+const temporaryRoot = work.root;
+let success = false;
 try {
   mkdirSync(join(temporaryRoot, "tmp"));
   mkdirSync(join(temporaryRoot, "npm-cache"));
@@ -16,9 +18,11 @@ try {
     ...process.env,
     TEMP: join(temporaryRoot, "tmp"),
     TMP: join(temporaryRoot, "tmp"),
+    TMPDIR: join(temporaryRoot, "tmp"),
     npm_config_cache: join(temporaryRoot, "npm-cache"),
   });
   console.log(`Actual npm package verified: ${RELEASE_FILES.length} files, SHA-256 ${result.sha256}.`);
+  success = true;
 } finally {
-  rmSync(temporaryRoot, { recursive: true, force: true });
+  finishReleaseWork(work, success);
 }

@@ -9,7 +9,6 @@ import {
   RELEASE_FILES,
   RELEASE_TARBALL_FILENAME,
   assertExternalOutputDirectory,
-  assertIdenticalReleaseTarballs,
   formatSha256Sums,
   verifyTarballBuffer,
 } from "./release-package-lib.mjs";
@@ -167,12 +166,6 @@ describe("release tarball verification", () => {
         }),
       ),
     ).toThrow("release_openclaw_compat_invalid");
-  });
-
-  it("fails closed when two candidate tarballs differ", () => {
-    const first = makeTarball();
-    const second = Buffer.concat([first, Buffer.from([0])]);
-    expect(() => assertIdenticalReleaseTarballs(first, second)).toThrow("release_tarball_nondeterministic");
   });
 
   it("formats one stable GNU-style checksum line for the official asset", () => {

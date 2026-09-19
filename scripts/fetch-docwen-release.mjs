@@ -34,7 +34,12 @@ function versionTuple(value) {
   const match = typeof value === "string" ? VERSION.exec(value) : undefined;
   if (!match) return undefined;
   const tuple = match.slice(1).map(Number);
+  if (tuple.some((part) => !Number.isSafeInteger(part))) return undefined;
   return compareVersion(tuple, MINIMUM_VERSION) >= 0 ? tuple : undefined;
+}
+
+export function isSupportedDocWenVersion(value) {
+  return versionTuple(value) !== undefined;
 }
 
 function compareVersion(left, right) {
