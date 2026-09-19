@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { BigIntStats } from "node:fs";
 import { lstat, open, realpath, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import * as path from "node:path";
 
 import { terminateProcessTree } from "../process/runner.js";
@@ -838,12 +839,28 @@ function errorMessage(error: unknown): string {
 }
 
 function boundedEnvironment(locale?: string): NodeJS.ProcessEnv {
-  const bootstrapKeys = ["SystemRoot", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "TEMP", "TMP"];
+  const bootstrapKeys = [
+    "SystemRoot",
+    "WINDIR",
+    "COMSPEC",
+    "PATH",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+  ];
   const env: NodeJS.ProcessEnv = {};
   for (const key of bootstrapKeys) if (process.env[key]) env[key] = process.env[key];
+  const profileKeys =
+    process.platform === "win32"
+      ? ["USERPROFILE", "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH"]
+      : ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"];
+  for (const key of profileKeys) if (process.env[key]) env[key] = process.env[key];
   for (const key of ["DOCWEN_CONFIG_DIR", "DOCWEN_DATA_DIR", "DOCWEN_LOG_DIR"] as const) {
     const value = process.env[key]?.trim();
-    if (value && !value.includes("\u0000")) env[key] = value;
+    if (value) env[key] = profileDirectory(value);
   }
   const logToTemp = process.env.DOCWEN_LOG_TO_TEMP?.trim().toLowerCase();
   if (logToTemp && ["1", "true", "yes", "on"].includes(logToTemp)) {
@@ -854,4 +871,13 @@ function boundedEnvironment(locale?: string): NodeJS.ProcessEnv {
   env.PYTHONIOENCODING = "utf-8";
   env.PYTHONUTF8 = "1";
   return env;
+}
+
+function profileDirectory(value: string): string {
+  if (value.includes("\u0000")) throw new Error("DocWen profile directory contains a NUL character.");
+  const expanded =
+    value === "~" || value.startsWith("~/") || (process.platform === "win32" && value.startsWith("~\\"))
+      ? path.join(homedir(), value.slice(2))
+      : value;
+  return path.isAbsolute(expanded) || path.win32.isAbsolute(expanded) ? expanded : path.resolve(expanded);
 }

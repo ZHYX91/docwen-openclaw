@@ -345,15 +345,10 @@ describe("DocWen Machine Protocol client", () => {
       PYTHONIOENCODING: "utf-8",
       PYTHONUTF8: "1",
     });
-    for (const key of [
-      "DOCWEN_API_TOKEN",
-      "DOCWEN_UNKNOWN",
-      "AWS_SECRET_ACCESS_KEY",
-      "NODE_OPTIONS",
-      "HOME",
-    ]) {
+    for (const key of ["DOCWEN_API_TOKEN", "DOCWEN_UNKNOWN", "AWS_SECRET_ACCESS_KEY", "NODE_OPTIONS"]) {
       expect(environment).not.toHaveProperty(key);
     }
+    if (process.platform !== "win32") expect(environment.HOME).toBe("C:\\sensitive-home");
   });
 
   it("drops empty and false DocWen isolation hook values", async () => {
@@ -372,6 +367,24 @@ describe("DocWen Machine Protocol client", () => {
     expect(environment).not.toHaveProperty("DOCWEN_CONFIG_DIR");
     expect(environment).not.toHaveProperty("DOCWEN_LOG_DIR");
     expect(environment).not.toHaveProperty("DOCWEN_LOG_TO_TEMP");
+  });
+
+  it("preserves system profile roots and resolves relative profile selection before changing child cwd", async () => {
+    const profileKeys =
+      process.platform === "win32"
+        ? ["USERPROFILE", "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH"]
+        : ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"];
+    for (const key of profileKeys) vi.stubEnv(key, `profile-${key}`);
+    vi.stubEnv("DOCWEN_DATA_DIR", "./selected-profile");
+    await runDocWenMachineQuery({
+      binaryPath: "C:\\DocWen\\DocWenCLI.exe",
+      method: "health/check",
+      params: {},
+      timeoutMs: 1_000,
+    });
+    const environment = spawnMock.mock.calls[0]![2].env as NodeJS.ProcessEnv;
+    for (const key of profileKeys) expect(environment[key]).toBe(`profile-${key}`);
+    expect(environment.DOCWEN_DATA_DIR).toBe(path.resolve("./selected-profile"));
   });
 
   it("validates every artifact before returning a completed task", async () => {
