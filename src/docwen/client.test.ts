@@ -32,7 +32,7 @@ async function oneArtifactBundle(
   await mkdir(staging);
   await writeFile(artifactPath, bytes);
   return {
-    schema: "docwen.artifact_bundle.v2",
+    schema: "docwen.artifact_bundle.v3",
     bundle_id: `bundle.${name}`,
     task_id: `task.${name}`,
     producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },
@@ -85,7 +85,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
     await writeFile(markdownPath, markdown);
     await writeFile(imagePath, image);
     const bundle: ValidatedArtifactBundle = {
-      schema: "docwen.artifact_bundle.v2",
+      schema: "docwen.artifact_bundle.v3",
       bundle_id: "bundle.test",
       task_id: "task.test",
       producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },
@@ -145,7 +145,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
     await writeFile(replacement, "new", "utf8");
 
     const emptyBundle = {
-      schema: "docwen.artifact_bundle.v2",
+      schema: "docwen.artifact_bundle.v3",
       bundle_id: "bundle.empty",
       task_id: "task.empty",
       producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },

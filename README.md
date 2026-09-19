@@ -1,6 +1,6 @@
 # DocWen for OpenClaw
 
-Typed OpenClaw tools for DocWen Machine Protocol v2 and verified `docwen.artifact_bundle.v2` output graphs.
+Typed OpenClaw tools for DocWen Machine Protocol v2 and verified `docwen.artifact_bundle.v3` output graphs.
 
 > Version 2.0.0 is published as an [immutable GitHub Release](https://github.com/ZHYX91/docwen-openclaw/releases/tag/2.0.0).
 

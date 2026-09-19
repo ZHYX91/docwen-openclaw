@@ -100,7 +100,7 @@ class FakeChild extends EventEmitter {
         methods: [],
         features: { progress: true, cancellation: true },
         artifact_bundle_schema:
-          serverState.behavior === "bundle_v1" ? "docwen.artifact_bundle.v1" : "docwen.artifact_bundle.v2",
+          serverState.behavior === "bundle_v1" ? "docwen.artifact_bundle.v1" : "docwen.artifact_bundle.v3",
         max_concurrent_tasks: 1,
       });
       return;
@@ -149,7 +149,7 @@ class FakeChild extends EventEmitter {
           task_id: "task.1",
           sequence: 1,
           bundle: {
-            schema: "docwen.artifact_bundle.v2",
+            schema: "docwen.artifact_bundle.v3",
             bundle_id: "bundle.1",
             task_id: "task.1",
             producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },
@@ -211,7 +211,7 @@ function artifact(artifactId: string, locator: string, bytes: Buffer, kind = "do
 
 function bundle(artifacts: JsonObject[], entries: JsonObject[], relations: JsonObject[] = []): JsonObject {
   return {
-    schema: "docwen.artifact_bundle.v2",
+    schema: "docwen.artifact_bundle.v3",
     bundle_id: "bundle.graph",
     task_id: "task.graph",
     producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },
@@ -306,7 +306,7 @@ describe("DocWen Machine Protocol client", () => {
     },
   );
 
-  it("rejects a Machine server that does not declare Artifact Bundle v2", async () => {
+  it("rejects a Machine server that does not declare Artifact Bundle v3", async () => {
     serverState.behavior = "bundle_v1";
 
     await expect(
@@ -409,7 +409,7 @@ describe("DocWen Machine Protocol client", () => {
     });
   });
 
-  it("validates Bundle v2 logical paths and document-node manifest relations", async () => {
+  it("validates Bundle v3 logical paths and document-node manifest relations", async () => {
     const root = await temporaryRoot();
     const documentBytes = Buffer.from("# document\n", "utf8");
     const manifestBytes = Buffer.from("{}\n", "utf8");
@@ -420,7 +420,7 @@ describe("DocWen Machine Protocol client", () => {
     const manifest = artifact("resource.manifest", "node.json", manifestBytes, "resource");
     manifest.logical_path = "report/.docwen/document-node.json";
     const value = {
-      schema: "docwen.artifact_bundle.v2",
+      schema: "docwen.artifact_bundle.v3",
       bundle_id: "bundle.v2",
       task_id: "task.graph",
       producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },
@@ -438,7 +438,7 @@ describe("DocWen Machine Protocol client", () => {
     };
 
     await expect(validateArtifactBundle(value, root, "task.graph")).resolves.toMatchObject({
-      schema: "docwen.artifact_bundle.v2",
+      schema: "docwen.artifact_bundle.v3",
       layout_schema: "docwen.document_node.v1",
       artifacts: [
         { artifact_id: "document.1", logical_path: "report/document.md" },

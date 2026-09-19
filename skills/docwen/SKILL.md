@@ -10,7 +10,7 @@ Use the registered `docwen_*` tools. Never construct a shell command for DocWen.
 
 ## Read first
 
-1. Call `docwen_info` to verify Machine Protocol v2, Artifact Bundle v2, capability availability, and health.
+1. Call `docwen_info` to verify Machine Protocol v2, Artifact Bundle v3, capability availability, and health.
 2. Use `docwen_inspect` before choosing an operation for an unfamiliar input.
 3. Use `docwen_resources` when a format, template, optimization, or numbering scheme must be selected.
 4. When a template is required, call `docwen_resources` with `kind="templates"` and pass the returned canonical resource `id` to `docwen_convert.template`. Never pass a file path or display name.

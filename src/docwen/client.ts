@@ -1383,11 +1383,11 @@ function artifactCommitPath(
   bundle: ValidatedArtifactBundle,
   artifact: ValidatedArtifactBundle["artifacts"][number],
 ): string {
-  if (bundle.schema === "docwen.artifact_bundle.v2") {
+  if (bundle.schema === "docwen.artifact_bundle.v3") {
     if (artifact.logical_path === undefined) {
       throw new DocWenMachineError(
         "docwen_bundle_shape_invalid",
-        "Artifact Bundle v2 is missing a validated logical path.",
+        "Artifact Bundle v3 is missing a validated logical path.",
       );
     }
     return artifact.logical_path;
