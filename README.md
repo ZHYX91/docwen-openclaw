@@ -33,7 +33,11 @@ Optional write tools:
 - `docwen_merge_tables`
 - `docwen_merge_images_to_tiff`
 
-The write tools use `outputDir` as the transaction target. If it already exists, the call fails unless the caller explicitly sets `overwrite=true`. A local IPC lock rejects concurrent writers, the destination identity is rechecked immediately before the swap, and every copied artifact is revalidated. The committed directory preserves every Bundle locator and includes `.docwen-artifact-bundle.json`.
+The write tools use `outputDir` as the transaction target. If it already exists, the call fails unless the caller explicitly sets `overwrite=true`. A local IPC lock rejects concurrent writers, the destination observed before conversion is rechecked immediately before the swap, and every copied artifact is revalidated. The committed directory contains exactly the Bundle's logical artifact paths. Hashes, entries and relations remain in the structured result; no hidden manifest is added.
+
+Publication and rollback never replace a newly appearing target. Windows uses native directory rename semantics; Linux x64 uses the included minimal Node-API component for `renameat2(RENAME_NOREPLACE)`. Files use an exclusive hard link on both systems. Unsupported filesystems fail explicitly. See [the component's source and build instructions](native/README.md).
+
+Write results contain `status` (`success`, `warning`, `failed` or `unconfirmed`) and `publication` with `state`, `retry` and structured `warnings`. A committed result remains `published` if backup, staging or lock cleanup fails, and includes usable output paths. An uncertain publication or failed rollback is `unconfirmed`, includes recovery paths, and must not be retried automatically. A failure known to precede publication is `not_published`; review its cause before retrying. Cancellation is checked before the commit begins; once that boundary is crossed, the transaction completes or restores the previous output.
 
 Output locks use a Windows named pipe or a Linux abstract Unix-domain socket derived from the canonical destination. The operating system releases them when the owning process exits. There are no lock files, PID-based stale-lock deletion, TCP listeners, or network requests. This follows [Node's IPC lifetime contract](https://nodejs.org/docs/latest-v24.x/api/net.html#ipc-support).
 

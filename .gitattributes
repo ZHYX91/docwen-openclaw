@@ -16,6 +16,7 @@
 *.exe -text
 *.dll -text
 *.pyd -text
+*.node -text
 *.so -text
 *.dylib -text
 *.woff -text

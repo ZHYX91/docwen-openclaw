@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { clientTesting } from "./client.js";
+import { atomicCommitBundle, atomicReplaceFile, preflightOutputDirectory } from "./output-transaction.js";
 import { EXACT_TWO_MARKDOWN_TO_DOCX_CAPABILITY } from "./fixtures.generated.js";
 import type { MachineInputHandle, ValidatedArtifactBundle } from "./machine-client.js";
 
@@ -72,7 +73,7 @@ function expectedContent(content: string): { sizeBytes: number; sha256: string }
 }
 
 describe("OpenClaw Artifact Bundle commit", () => {
-  it("commits all verified artifacts and its portable manifest as one directory", async () => {
+  it("commits exactly the verified logical artifacts without a hidden manifest", async () => {
     const workspace = await root();
     const staging = path.join(workspace, "staging");
     const output = path.join(workspace, "bundle-output");
@@ -125,14 +126,11 @@ describe("OpenClaw Artifact Bundle commit", () => {
       ],
     };
 
-    const committed = await clientTesting.atomicCommitBundle(bundle, output, false);
-    expect(await readFile(committed.preferredArtifactPath, "utf8")).toBe("# Result\n");
+    const committed = await atomicCommitBundle(bundle, output, false);
+    expect(await readFile(committed.value.preferredArtifactPath, "utf8")).toBe("# Result\n");
     expect(await readFile(path.join(output, "report", "assets", "image.png"))).toEqual(image);
-    const manifest = JSON.parse(await readFile(path.join(output, ".docwen-artifact-bundle.json"), "utf8"));
-    expect(manifest.artifacts[0]).not.toHaveProperty("absolutePath");
-    expect(manifest.artifacts[0].logical_path).toBe("report/result.md");
-    expect(manifest.layout_schema).toBe("docwen.artifact_layout.v1");
-    expect(manifest.relations).toEqual(bundle.relations);
+    expect(await readdir(output)).toEqual(["report"]);
+    expect(committed.publication).toEqual({ state: "published", retry: "do_not_retry", warnings: [] });
   });
 
   it("refuses implicit overwrite and atomically replaces a regular in-place target", async () => {
@@ -154,10 +152,10 @@ describe("OpenClaw Artifact Bundle commit", () => {
       entries: [],
       relations: [],
     } as ValidatedArtifactBundle;
-    await expect(clientTesting.atomicCommitBundle(emptyBundle, output, false)).rejects.toMatchObject({
+    await expect(atomicCommitBundle(emptyBundle, output, false)).rejects.toMatchObject({
       code: "docwen_output_exists",
     });
-    await clientTesting.atomicReplaceFile(source, replacement, expectedContent("new"));
+    await atomicReplaceFile(source, replacement, expectedContent("new"));
     expect(await readFile(source, "utf8")).toBe("new");
   });
 
@@ -167,19 +165,21 @@ describe("OpenClaw Artifact Bundle commit", () => {
     await mkdir(output);
     await writeFile(path.join(output, "old.txt"), "old", "utf8");
     const bundle = await oneArtifactBundle(workspace, "replacement", "new");
-    const warnings: string[] = [];
 
-    const committed = await clientTesting.atomicCommitBundle(bundle, output, true, {
+    const committed = await atomicCommitBundle(bundle, output, true, {
       cleanupBackup: async () => {
         throw new Error("simulated cleanup failure");
       },
-      onCleanupWarning: (warning) => warnings.push(warning),
     });
 
-    expect(await readFile(committed.preferredArtifactPath, "utf8")).toBe("new");
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain("was committed");
-    expect((await readdir(workspace)).some((name) => name.includes(".docwen-backup-"))).toBe(true);
+    expect(await readFile(committed.value.preferredArtifactPath, "utf8")).toBe("new");
+    expect(committed.publication).toMatchObject({
+      state: "published",
+      retry: "do_not_retry",
+      warnings: [{ code: "backup_cleanup_failed" }],
+    });
+    const backup = committed.publication.warnings[0]!.path!;
+    expect(await readFile(path.join(backup, "old.txt"), "utf8")).toBe("old");
   });
 
   it("fails a concurrent Bundle commit without clobbering the lock holder", async () => {
@@ -189,7 +189,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
     const secondBundle = await oneArtifactBundle(workspace, "second", "second writer");
     const entered = deferred();
     const release = deferred();
-    const first = clientTesting.atomicCommitBundle(firstBundle, output, false, {
+    const first = atomicCommitBundle(firstBundle, output, false, {
       beforeSwap: async () => {
         entered.resolve();
         await release.promise;
@@ -197,7 +197,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
     });
     await entered.promise;
     try {
-      await expect(clientTesting.atomicCommitBundle(secondBundle, output, false)).rejects.toMatchObject({
+      await expect(atomicCommitBundle(secondBundle, output, false)).rejects.toMatchObject({
         code: "docwen_output_busy",
       });
     } finally {
@@ -218,7 +218,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
     await writeFile(path.join(output, "original.txt"), "original", "utf8");
 
     await expect(
-      clientTesting.atomicCommitBundle(nextBundle, output, true, {
+      atomicCommitBundle(nextBundle, output, true, {
         beforeSwap: async () => {
           await rename(output, movedOutput);
           await mkdir(output);
@@ -237,7 +237,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
     const nextBundle = await oneArtifactBundle(workspace, "appearing", "next writer");
 
     await expect(
-      clientTesting.atomicCommitBundle(nextBundle, output, false, {
+      atomicCommitBundle(nextBundle, output, false, {
         beforeSwap: async () => {
           await mkdir(output);
           await writeFile(path.join(output, "intruder.txt"), "intruder", "utf8");
@@ -254,7 +254,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
     const tampered = await oneArtifactBundle(workspace, "tampered", "validated bytes");
     await writeFile(tampered.artifacts[0]!.absolutePath, "changed after validation", "utf8");
 
-    await expect(clientTesting.atomicCommitBundle(tampered, output, false)).rejects.toMatchObject({
+    await expect(atomicCommitBundle(tampered, output, false)).rejects.toMatchObject({
       code: "docwen_machine_integrity_error",
     });
     expect(await readdir(workspace)).not.toContain("tampered-output");
@@ -270,7 +270,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
     await writeFile(secondReplacement, "second", "utf8");
     const entered = deferred();
     const release = deferred();
-    const first = clientTesting.atomicReplaceFile(destination, firstReplacement, expectedContent("first"), {
+    const first = atomicReplaceFile(destination, firstReplacement, expectedContent("first"), {
       beforeSwap: async () => {
         entered.resolve();
         await release.promise;
@@ -279,7 +279,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
     await entered.promise;
     try {
       await expect(
-        clientTesting.atomicReplaceFile(destination, secondReplacement, expectedContent("second")),
+        atomicReplaceFile(destination, secondReplacement, expectedContent("second")),
       ).rejects.toMatchObject({ code: "docwen_output_busy" });
     } finally {
       release.resolve();
@@ -301,13 +301,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
     await writeFile(destination, "newer user content", "utf8");
 
     await expect(
-      clientTesting.atomicReplaceFile(
-        destination,
-        replacement,
-        expectedContent("replacement"),
-        {},
-        sourceVersion,
-      ),
+      atomicReplaceFile(destination, replacement, expectedContent("replacement"), {}, sourceVersion),
     ).rejects.toMatchObject({ code: "docwen_source_changed" });
     expect(await readFile(destination, "utf8")).toBe("newer user content");
   });
@@ -318,18 +312,19 @@ describe("OpenClaw Artifact Bundle commit", () => {
     const replacement = path.join(workspace, "replacement.md");
     await writeFile(destination, "old", "utf8");
     await writeFile(replacement, "new", "utf8");
-    const warnings: string[] = [];
-
-    await clientTesting.atomicReplaceFile(destination, replacement, expectedContent("new"), {
+    const committed = await atomicReplaceFile(destination, replacement, expectedContent("new"), {
       cleanupBackup: async () => {
         throw new Error("simulated cleanup failure");
       },
-      onCleanupWarning: (warning) => warnings.push(warning),
     });
 
     expect(await readFile(destination, "utf8")).toBe("new");
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain("was committed");
+    expect(committed.publication).toMatchObject({
+      state: "published",
+      retry: "do_not_retry",
+      warnings: [{ code: "backup_cleanup_failed" }],
+    });
+    expect(await readFile(committed.publication.warnings[0]!.path!, "utf8")).toBe("old");
   });
 
   it("detects an in-place target mutation immediately before replacement", async () => {
@@ -340,11 +335,158 @@ describe("OpenClaw Artifact Bundle commit", () => {
     await writeFile(replacement, "replacement", "utf8");
 
     await expect(
-      clientTesting.atomicReplaceFile(destination, replacement, expectedContent("replacement"), {
+      atomicReplaceFile(destination, replacement, expectedContent("replacement"), {
         beforeSwap: async () => writeFile(destination, "concurrent mutation", "utf8"),
       }),
     ).rejects.toMatchObject({ code: "docwen_output_changed" });
     expect(await readFile(destination, "utf8")).toBe("concurrent mutation");
+  });
+
+  it("removes a failed replacement copy and preserves the source", async () => {
+    const workspace = await root();
+    const destination = path.join(workspace, "source.md");
+    const replacement = path.join(workspace, "replacement.md");
+    await writeFile(destination, "original");
+    await writeFile(replacement, "tampered");
+    await expect(
+      atomicReplaceFile(destination, replacement, expectedContent("expected")),
+    ).rejects.toMatchObject({
+      code: "docwen_machine_integrity_error",
+      details: { publication: { state: "not_published", retry: "review_before_retry" } },
+    });
+    expect(await readFile(destination, "utf8")).toBe("original");
+    expect(await readdir(workspace)).toEqual(["replacement.md", "source.md"]);
+  });
+
+  it("does not allocate output staging for a malformed preferred entry", async () => {
+    const workspace = await root();
+    const bundle = await oneArtifactBundle(workspace, "invalid", "content");
+    bundle.entries = [];
+    await expect(atomicCommitBundle(bundle, path.join(workspace, "output"), false)).rejects.toMatchObject({
+      code: "docwen_bundle_shape_invalid",
+    });
+    expect(await readdir(workspace)).toEqual(["staging-invalid"]);
+  });
+
+  it("cancels before the commit point and removes staging", async () => {
+    const workspace = await root();
+    const destination = path.join(workspace, "source.md");
+    const replacement = path.join(workspace, "replacement.md");
+    const controller = new AbortController();
+    await writeFile(destination, "original");
+    await writeFile(replacement, "new");
+    await expect(
+      atomicReplaceFile(destination, replacement, expectedContent("new"), {
+        beforeSwap: () => controller.abort(),
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ details: { publication: { state: "not_published" } } });
+    expect(await readFile(destination, "utf8")).toBe("original");
+    expect(await readdir(workspace)).toEqual(["replacement.md", "source.md"]);
+  });
+
+  it("restores the previous output on a failure after moving it to backup", async () => {
+    const workspace = await root();
+    const destination = path.join(workspace, "source.md");
+    const replacement = path.join(workspace, "replacement.md");
+    await writeFile(destination, "original");
+    await writeFile(replacement, "new");
+    await expect(
+      atomicReplaceFile(destination, replacement, expectedContent("new"), {
+        afterBackupMove: () => {
+          throw new Error("interrupted before publication");
+        },
+      }),
+    ).rejects.toMatchObject({ details: { publication: { state: "not_published" } } });
+    expect(await readFile(destination, "utf8")).toBe("original");
+    expect(await readdir(workspace)).toEqual(["replacement.md", "source.md"]);
+  });
+
+  it("preserves an intervening file and the original backup when rollback cannot replace it", async () => {
+    const workspace = await root();
+    const destination = path.join(workspace, "source.md");
+    const replacement = path.join(workspace, "replacement.md");
+    await writeFile(destination, "original");
+    await writeFile(replacement, "new");
+    const failure = await atomicReplaceFile(destination, replacement, expectedContent("new"), {
+      afterBackupMove: () => writeFile(destination, "intervening writer", { flag: "wx" }),
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: "docwen_commit_rollback_failed",
+      details: { publication: { state: "unconfirmed", retry: "do_not_retry" } },
+    });
+    const recovery = (failure as { details: { publication: { recovery: { backup: string } } } }).details
+      .publication.recovery;
+    expect(await readFile(recovery.backup, "utf8")).toBe("original");
+    expect(await readFile(destination, "utf8")).toBe("intervening writer");
+  });
+
+  it("does not replace an intervening empty directory during publication or rollback", async () => {
+    const workspace = await root();
+    const destination = path.join(workspace, "output");
+    await mkdir(destination);
+    await writeFile(path.join(destination, "old.txt"), "original");
+    const bundle = await oneArtifactBundle(workspace, "directory-race", "new");
+    const failure = await atomicCommitBundle(bundle, destination, true, {
+      afterBackupMove: () => mkdir(destination),
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: "docwen_commit_rollback_failed",
+      details: { publication: { state: "unconfirmed", retry: "do_not_retry" } },
+    });
+    const recovery = (failure as { details: { publication: { recovery: { backup: string } } } }).details
+      .publication.recovery;
+    expect(await readFile(path.join(recovery.backup, "old.txt"), "utf8")).toBe("original");
+    expect(await readdir(destination)).toEqual([]);
+  });
+
+  it("binds overwrite to the directory observed before conversion", async () => {
+    const workspace = await root();
+    const destination = path.join(workspace, "output");
+    const initial = await preflightOutputDirectory(destination, true);
+    await mkdir(destination);
+    const bundle = await oneArtifactBundle(workspace, "late-output", "new");
+    await expect(atomicCommitBundle(bundle, destination, true, {}, initial)).rejects.toMatchObject({
+      details: { publication: { state: "not_published" } },
+    });
+    expect(await readdir(destination)).toEqual([]);
+  });
+
+  it("keeps published files usable when staging cleanup fails", async () => {
+    const workspace = await root();
+    const destination = path.join(workspace, "source.md");
+    const replacement = path.join(workspace, "replacement.md");
+    await writeFile(destination, "original");
+    await writeFile(replacement, "new");
+    const result = await atomicReplaceFile(destination, replacement, expectedContent("new"), {
+      cleanupStaging: async () => {
+        throw new Error("cleanup unavailable");
+      },
+    });
+    expect(result.publication).toMatchObject({
+      state: "published",
+      retry: "do_not_retry",
+      warnings: [{ code: "staging_cleanup_failed" }],
+    });
+    expect(await readFile(result.value, "utf8")).toBe("new");
+  });
+
+  it("restores a concurrent source edit detected in the moved backup", async () => {
+    const workspace = await root();
+    const destination = path.join(workspace, "source.md");
+    const replacement = path.join(workspace, "replacement.md");
+    await writeFile(destination, "original");
+    await writeFile(replacement, "new");
+    await expect(
+      atomicReplaceFile(destination, replacement, expectedContent("new"), {
+        afterBackupMove: (backup) => writeFile(backup, "concurrent source edit"),
+      }),
+    ).rejects.toMatchObject({
+      code: "docwen_output_changed",
+      details: { publication: { state: "not_published" } },
+    });
+    expect(await readFile(destination, "utf8")).toBe("concurrent source edit");
+    expect(await readdir(workspace)).toEqual(["replacement.md", "source.md"]);
   });
 
   it("expands ordered page ranges and rejects overlaps", () => {

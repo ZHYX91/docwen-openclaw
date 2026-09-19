@@ -31,6 +31,16 @@ export const RELEASE_FILES = Object.freeze(
     "dist/config.js",
     "dist/docwen/client.d.ts",
     "dist/docwen/client.js",
+    "dist/docwen/file-integrity.d.ts",
+    "dist/docwen/file-integrity.js",
+    "dist/docwen/output-lock.d.ts",
+    "dist/docwen/output-lock.js",
+    "dist/docwen/output-transaction.d.ts",
+    "dist/docwen/output-transaction.js",
+    "dist/docwen/publication.d.ts",
+    "dist/docwen/publication.js",
+    "dist/docwen/publish-path.d.ts",
+    "dist/docwen/publish-path.js",
     "dist/docwen/machine-client.d.ts",
     "dist/docwen/machine-client.js",
     "dist/docwen/machine-framing.d.ts",
@@ -48,6 +58,7 @@ export const RELEASE_FILES = Object.freeze(
     "dist/tools/definitions.d.ts",
     "dist/tools/definitions.js",
     "openclaw-config.example.json5",
+    "native/linux-x64.node",
     "openclaw.plugin.json",
     "package.json",
     "skills/docwen/SKILL.md",
@@ -116,7 +127,15 @@ function verifyPackageIdentity(entries) {
   if (pkg.license !== "MIT") fail("release_package_license_invalid");
   assertExactArray(
     pkg.files,
-    ["dist", "openclaw.plugin.json", "openclaw-config.example.json5", "skills", "README.md", "LICENSE"],
+    [
+      "dist",
+      "native/linux-x64.node",
+      "openclaw.plugin.json",
+      "openclaw-config.example.json5",
+      "skills",
+      "README.md",
+      "LICENSE",
+    ],
     "release_package_files_field_invalid",
   );
 

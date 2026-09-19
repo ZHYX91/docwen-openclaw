@@ -33,6 +33,7 @@ function packageJson(overrides = {}) {
     types: "dist/index.d.ts",
     files: [
       "dist",
+      "native/linux-x64.node",
       "openclaw.plugin.json",
       "openclaw-config.example.json5",
       "skills",

@@ -41,11 +41,11 @@ Before calling a write tool:
 
 `docwen_number_markdown` requires exactly one of an explicit `outputDir` or explicit `inPlace=true`. Never infer in-place modification. An in-place operation is bound to the source version read at task start; if the source changes while DocWen is preparing the result, report the conflict and leave the newer file untouched.
 
-A successful result can include non-fatal cleanup warnings after the output has already been committed. Report those warnings, but do not repeat the write: a post-commit cleanup problem does not make the published result disappear or make the operation safe to retry automatically.
+Read `status` and `publication.state` before reporting a write result. `published` results include valid output paths even when `status="warning"`; report `publication.warnings` without repeating the write. `unconfirmed` means publication or restoration could not be confirmed: preserve and report `publication.recovery`, and do not retry or delete its paths automatically. `not_published` means no new output was committed; review the reported failure before another attempt. Always honor `publication.retry`; cleanup failures never authorize another write.
 
 ## Artifact semantics
 
-The Bundle's `document`, `fragment`, and `resource` kinds and its relations describe output semantics. They do not authorize another product's page, node, or workspace structure. Preserve the complete committed Bundle directory unless the user explicitly requests a later import or cleanup operation.
+The Bundle's `document`, `fragment`, and `resource` kinds and its relations describe output semantics. They do not authorize another product's page, node, or workspace structure. Preserve the complete committed Bundle directory unless the user explicitly requests a later import or cleanup operation. Use the returned Bundle for hashes and relationships; the output contains only declared logical artifacts, with no hidden consumer manifest.
 
 A DocWen template is a resource identity, not a host path. Treat `origin`, `is_default`, and other template metadata returned by newer DocWen builds as descriptive facts; the canonical `id` remains the only value sent back in conversion requests.
 
