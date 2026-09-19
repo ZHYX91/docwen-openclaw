@@ -405,6 +405,8 @@ function setSupportedOption(
     if (required) throw unsupportedCapabilityOption(capability, parameter);
     return false;
   }
+  const schema = capabilityOptionSchema(capability, name)!;
+  if (!optionAllowsValue(schema, value)) throw unsupportedCapabilityOption(capability, parameter);
   options[name] = value;
   return true;
 }
@@ -416,9 +418,14 @@ function capabilityOptionSchema(capability: MachineCapability, name: string): Js
   return schema && typeof schema === "object" && !Array.isArray(schema) ? (schema as JsonObject) : undefined;
 }
 
-function optionAllowsValue(schema: JsonObject, value: string): boolean {
+function optionAllowsValue(schema: JsonObject, value: string | boolean): boolean {
+  const type = schema.type;
+  if (type !== undefined && (Array.isArray(type) ? !type.includes(typeof value) : type !== typeof value)) {
+    return false;
+  }
+  if (Object.hasOwn(schema, "const") && schema.const !== value) return false;
   const allowed = schema.enum;
-  return !Array.isArray(allowed) || allowed.includes(value);
+  return allowed === undefined || (Array.isArray(allowed) && allowed.includes(value));
 }
 
 function unsupportedCapabilityOption(capability: MachineCapability, parameter: string): DocWenMachineError {

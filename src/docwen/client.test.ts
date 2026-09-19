@@ -414,6 +414,37 @@ describe("capability-driven conversion options", () => {
       "does not support the requested ocr option",
     );
   });
+
+  it.each([
+    ["ocrLanguage", "chi_sim", "ocr_language", { type: "string", enum: ["auto", "chinese", "english"] }],
+    ["numberingScheme", "invented", "numbering_scheme", { type: "string", enum: ["gongwen_standard"] }],
+    ["ocr", false, "recognize_text", { type: "boolean", enum: [true] }],
+    ["keepImages", false, "preserve_resources", { type: "boolean", const: true }],
+    ["removeNumbering", true, "remove_numbering", { type: "string" }],
+    ["addNumbering", true, "add_numbering", { type: ["string", "null"] }],
+    ["ocrLanguage", "english", "ocr_language", { type: "string", enum: "english" }],
+  ])("rejects %s when its value violates the selected capability", (parameter, value, name, schema) => {
+    expect(() =>
+      clientTesting.buildConversionOptions(capability({ [String(name)]: schema }), {
+        [String(parameter)]: value,
+      }),
+    ).toThrow(`does not support the requested ${String(parameter)} option`);
+  });
+
+  it("preserves supported values without renaming or dropping them", () => {
+    const selected = capability({
+      ocr_language: { type: "string", enum: ["chinese", "english"] },
+      numbering_scheme: { type: "string", enum: ["gongwen_standard"] },
+      remove_numbering: { type: ["boolean", "null"], const: false },
+    });
+    expect(
+      clientTesting.buildConversionOptions(selected, {
+        ocrLanguage: "english",
+        numberingScheme: "gongwen_standard",
+        removeNumbering: false,
+      }),
+    ).toEqual({ ocr_language: "english", numbering_scheme: "gongwen_standard", remove_numbering: false });
+  });
 });
 
 describe("typed Machine input construction", () => {
