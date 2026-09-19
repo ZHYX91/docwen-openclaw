@@ -311,20 +311,12 @@ async function convert(
   const preparedInputs = await buildInputHandles(inputs);
   const outputMediaType = targetMediaType(requiredString(params, "to"));
   const capabilities = await discoverCapabilities(binaryPath, config, signal);
-  const matches = capabilities.filter(
-    (capability) =>
-      capability.availability !== "unavailable" &&
-      ["convert", "render"].includes(capability.operation) &&
-      capabilityAcceptsInputs(capability, preparedInputs) &&
-      capability.output_media_types.includes(outputMediaType),
+  const capability = selectConversionCapability(
+    capabilities,
+    preparedInputs,
+    outputMediaType,
+    optionalString(params, "optimization"),
   );
-  if (matches.length !== 1) {
-    throw new DocWenMachineError(
-      matches.length === 0 ? "docwen_capability_unavailable" : "docwen_capability_ambiguous",
-      `No unique available DocWen conversion accepts the supplied typed inputs and produces ${outputMediaType}.`,
-    );
-  }
-  const capability = matches[0]!;
   const options = buildConversionOptions(capability, params);
   return persistentTask(
     binaryPath,
@@ -337,6 +329,30 @@ async function convert(
     preparedInputs,
     capability,
   );
+}
+
+function selectConversionCapability(
+  capabilities: MachineCapability[],
+  inputs: MachineInputHandle[],
+  outputMediaType: string,
+  optimizationId?: string,
+): MachineCapability {
+  const matches = capabilities.filter(
+    (capability) =>
+      capability.availability !== "unavailable" &&
+      (optimizationId
+        ? capability.operation === "transform" && capability.optimization_id === optimizationId
+        : capability.optimization_id === undefined && ["convert", "render"].includes(capability.operation)) &&
+      capabilityAcceptsInputs(capability, inputs) &&
+      capability.output_media_types.includes(outputMediaType),
+  );
+  if (matches.length !== 1) {
+    throw new DocWenMachineError(
+      matches.length === 0 ? "docwen_capability_unavailable" : "docwen_capability_ambiguous",
+      `No unique available DocWen conversion accepts the supplied typed inputs and produces ${outputMediaType}${optimizationId ? ` with optimization ${optimizationId}` : ""}.`,
+    );
+  }
+  return matches[0]!;
 }
 
 function buildConversionOptions(capability: MachineCapability, params: Params): JsonObject {
@@ -652,6 +668,17 @@ async function discoverCapabilities(
 
 function parseCapability(value: JsonObject): MachineCapability {
   const capabilityId = requiredStringValue(value.capability_id, "capability.capability_id");
+  const operation = requiredStringValue(value.operation, "capability.operation");
+  const optimizationId =
+    value.optimization_id === undefined
+      ? undefined
+      : requiredStringValue(value.optimization_id, "capability.optimization_id");
+  if (optimizationId !== undefined && operation !== "transform") {
+    throw new DocWenMachineError(
+      "docwen_machine_protocol_error",
+      "An optimization capability must be a transform operation.",
+    );
+  }
   const inputShape = requiredObject(value.input_shape, "capability.input_shape");
   assertOnlyProperties(inputShape, ["slots", "undeclared_roles"], "capability.input_shape");
   const shape = requiredObject(value.output_shape, "capability.output_shape");
@@ -725,7 +752,8 @@ function parseCapability(value: JsonObject): MachineCapability {
   validateCapabilityInputContract(capabilityId, slots);
   return {
     capability_id: capabilityId,
-    operation: requiredStringValue(value.operation, "capability.operation"),
+    operation,
+    ...(optimizationId === undefined ? {} : { optimization_id: optimizationId }),
     input_shape: { slots, undeclared_roles: "reject" },
     output_media_types: stringArray(value.output_media_types, "capability.output_media_types"),
     output_shape: {
@@ -1609,6 +1637,7 @@ export const clientTesting = {
   capabilityAcceptsInputs,
   parsePageSelection,
   parseCapability,
+  selectConversionCapability,
   requiredInputArray,
   validateLogicalPath,
   validateTemplateResources,

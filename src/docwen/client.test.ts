@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { clientTesting } from "./client.js";
 import { EXACT_TWO_MARKDOWN_TO_DOCX_CAPABILITY } from "./fixtures.generated.js";
-import type { ValidatedArtifactBundle } from "./machine-client.js";
+import type { MachineInputHandle, ValidatedArtifactBundle } from "./machine-client.js";
 
 const roots: string[] = [];
 
@@ -377,6 +377,90 @@ describe("capability-driven conversion options", () => {
       dependencies: [],
       limitations: [],
     });
+
+  const input: MachineInputHandle = {
+    input_id: "input.1",
+    locator: { kind: "local_path", path: "/source.pdf" },
+    kind: "document",
+    role: "source",
+    logical_path: "source.pdf",
+    media_type: "application/pdf",
+    size_bytes: 1,
+    sha256: "a".repeat(64),
+  };
+
+  it("selects an optimization by its resource identity without guessing capability names", () => {
+    const ordinary = capability({});
+    const optimized = clientTesting.parseCapability({
+      ...ordinary,
+      capability_id: "opaque-optimizer-capability",
+      operation: "transform",
+      optimization_id: "public-optimizer",
+    });
+    expect(clientTesting.selectConversionCapability([optimized, ordinary], [input], "text/markdown")).toBe(
+      ordinary,
+    );
+    expect(
+      clientTesting.selectConversionCapability(
+        [ordinary, optimized],
+        [input],
+        "text/markdown",
+        "public-optimizer",
+      ),
+    ).toBe(optimized);
+  });
+
+  it.each([
+    { availability: "unavailable" as const },
+    { output_media_types: ["application/pdf"] },
+    { optimization_id: "another-optimizer" },
+    { operation: "convert" },
+    {
+      input_shape: {
+        slots: [
+          {
+            role: "source" as const,
+            kind: "document" as const,
+            media_types: ["text/markdown"],
+            min_items: 1,
+            max_items: 1,
+          },
+        ],
+        undeclared_roles: "reject" as const,
+      },
+    },
+  ])("rejects an inapplicable optimizer without falling back to ordinary conversion: %j", (change) => {
+    const ordinary = capability({});
+    const optimized = { ...ordinary, operation: "transform", optimization_id: "public-optimizer", ...change };
+    expect(() =>
+      clientTesting.selectConversionCapability(
+        [ordinary, optimized],
+        [input],
+        "text/markdown",
+        "public-optimizer",
+      ),
+    ).toThrow(expect.objectContaining({ code: "docwen_capability_unavailable" }));
+  });
+
+  it("rejects ambiguous optimizers", () => {
+    const optimized = { ...capability({}), operation: "transform", optimization_id: "public-optimizer" };
+    expect(() =>
+      clientTesting.selectConversionCapability(
+        [optimized, { ...optimized, capability_id: "another" }],
+        [input],
+        "text/markdown",
+        "public-optimizer",
+      ),
+    ).toThrow(expect.objectContaining({ code: "docwen_capability_ambiguous" }));
+  });
+
+  it.each([
+    { optimization_id: "public-optimizer", operation: "convert" },
+    { optimization_id: "", operation: "transform" },
+    { optimization_id: null, operation: "transform" },
+  ])("rejects malformed optimization capability metadata: %j", (change) => {
+    expect(() => clientTesting.parseCapability({ ...capability({}), ...change })).toThrow();
+  });
 
   it("maps semantic OCR and resource preferences to the selected capability contract", () => {
     const modern = capability({

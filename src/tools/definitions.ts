@@ -126,6 +126,13 @@ export function defineDocWenTools(tool: DefineTool): DefinedTool[] {
           outputDir: outputDirectoryValue(),
           overwrite: overwriteValue(),
           template: Type.Optional(templateIdValue()),
+          optimization: Type.Optional(
+            Type.String({
+              minLength: 1,
+              maxLength: 128,
+              description: "Exact optimization resource ID advertised by an available conversion capability.",
+            }),
+          ),
           keepImages: Type.Optional(Type.Boolean()),
           ocr: Type.Optional(Type.Boolean()),
           ocrLanguage: Type.Optional(Type.String({ minLength: 1 })),
