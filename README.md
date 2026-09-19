@@ -33,7 +33,9 @@ Optional write tools:
 - `docwen_merge_tables`
 - `docwen_merge_images_to_tiff`
 
-The write tools use `outputDir` as the transaction target. If it already exists, the call fails unless the caller explicitly sets `overwrite=true`. A sibling no-clobber lock rejects concurrent writers, the destination identity is rechecked immediately before the swap, and every copied artifact is revalidated. The committed directory preserves every Bundle locator and includes `.docwen-artifact-bundle.json`.
+The write tools use `outputDir` as the transaction target. If it already exists, the call fails unless the caller explicitly sets `overwrite=true`. A local IPC lock rejects concurrent writers, the destination identity is rechecked immediately before the swap, and every copied artifact is revalidated. The committed directory preserves every Bundle locator and includes `.docwen-artifact-bundle.json`.
+
+Output locks use a Windows named pipe or a Linux abstract Unix-domain socket derived from the canonical destination. The operating system releases them when the owning process exits. There are no lock files, PID-based stale-lock deletion, TCP listeners, or network requests. This follows [Node's IPC lifetime contract](https://nodejs.org/docs/latest-v24.x/api/net.html#ipc-support).
 
 `docwen_convert`, `docwen_merge_pdfs`, `docwen_merge_tables`, and `docwen_merge_images_to_tiff` accept typed `inputs` rather than path lists. Each item contains `{ file, kind, role, logicalPath }`. `logicalPath` is a unique, normalized relative POSIX key in the request virtual root; it is not derived from `file`. For example, a Markdown source at `doc/report.md` can reference the explicitly supplied linked PNG at `doc/assets/chart.png` even when their physical files are in unrelated directories.
 
@@ -90,5 +92,6 @@ openclaw plugins install ./openclaw-docwen-2.0.0.tgz
 - `src/docwen/machine-framing.ts`: canonical Content-Length framing.
 - `src/docwen/machine-client.ts`: Machine v2 lifecycle, cancellation, and strict Bundle validation.
 - `src/docwen/client.ts`: capability selection plus consumer-owned transactional commits.
+- `src/docwen/output-lock.ts`: OS-owned Windows/Linux output locking and release.
 - `src/process/runner.ts`: process-tree termination for cancellation and failure containment.
 - `skills/docwen/SKILL.md`: model-facing usage and safety rules.

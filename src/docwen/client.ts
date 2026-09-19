@@ -6,7 +6,6 @@ import {
   lstat,
   mkdir,
   mkdtemp,
-  open,
   readFile,
   realpath,
   rename,
@@ -31,6 +30,7 @@ import {
   type ValidatedArtifactBundle,
 } from "./machine-client.js";
 import { resolveDocWenBinary } from "./path.js";
+import { acquireOutputLock, type OutputLock } from "./output-lock.js";
 
 const MARKDOWN_MEDIA_TYPE = "text/markdown";
 const DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -1042,7 +1042,7 @@ async function atomicCommitBundle(
   await mkdir(parent, { recursive: true });
   return withDestinationLock(
     destination,
-    async () => {
+    async (lock) => {
       const expectedDestination = await preflightOutputDirectory(destination, overwrite);
       const transactionRoot = await mkdtemp(path.join(parent, `.docwen-${path.basename(destination)}-`));
       const backup = `${destination}.docwen-backup-${randomUUID()}`;
@@ -1075,6 +1075,7 @@ async function atomicCommitBundle(
           flag: "wx",
         });
         await hooks.beforeSwap?.();
+        lock.assertHeld();
         if (expectedDestination) {
           await assertPathIdentityUnchanged(destination, expectedDestination);
           await rename(destination, backup);
@@ -1137,7 +1138,7 @@ async function atomicReplaceFile(
   }
   return withDestinationLock(
     destination,
-    async () => {
+    async (lock) => {
       const existing = await lstat(destination, { bigint: true });
       if (!existing.isFile() || existing.isSymbolicLink()) {
         throw new DocWenMachineError(
@@ -1157,6 +1158,7 @@ async function atomicReplaceFile(
       let destinationCommitted = false;
       try {
         await hooks.beforeSwap?.();
+        lock.assertHeld();
         await assertPathIdentityUnchanged(destination, expectedDestination);
         await rename(destination, backup);
         movedExisting = true;
@@ -1200,105 +1202,49 @@ async function atomicReplaceFile(
 
 async function withDestinationLock<T>(
   destination: string,
-  body: () => Promise<T>,
+  body: (lock: OutputLock) => Promise<T>,
   onCleanupWarning?: (message: string) => void,
 ): Promise<T> {
-  const lockPath = `${destination}.docwen-lock`;
-  const lock = await acquireDestinationLock(lockPath);
-  const expectedLock = pathIdentity(await lock.stat({ bigint: true }));
+  let lock: OutputLock;
+  try {
+    lock = await acquireOutputLock(destination);
+  } catch (error) {
+    throw new DocWenMachineError(
+      isErrno(error, "EADDRINUSE") ? "docwen_output_busy" : "docwen_output_lock_failed",
+      isErrno(error, "EADDRINUSE")
+        ? "Another DocWen write is already targeting this path."
+        : "Unable to acquire the output lock.",
+      { cause: errorMessage(error) },
+    );
+  }
   let bodyResult: T | undefined;
   let bodyFailure: unknown;
+  let failed = false;
   try {
-    bodyResult = await body();
+    lock.assertHeld();
+    bodyResult = await body(lock);
   } catch (error) {
+    failed = true;
     bodyFailure = error;
   }
-
   let cleanupFailure: unknown;
   try {
-    const currentLock = await lstat(lockPath, { bigint: true });
-    if (!samePathIdentity(currentLock, expectedLock)) {
-      throw new DocWenMachineError("docwen_output_lock_lost", "The DocWen output lock changed unexpectedly.");
-    }
     await lock.close();
-    await rm(lockPath);
   } catch (error) {
-    await lock.close().catch(() => undefined);
     cleanupFailure = error;
   }
-
-  if (bodyFailure) {
-    if (cleanupFailure) {
-      throw new DocWenMachineError(
-        "docwen_output_lock_lost",
-        "The DocWen write failed and its output lock could not be cleaned up safely.",
-        {
-          cause: errorMessage(bodyFailure),
-          lock_cleanup: errorMessage(cleanupFailure),
-        },
-      );
+  if (failed) {
+    if (cleanupFailure && bodyFailure instanceof DocWenMachineError) {
+      bodyFailure.details.lock_cleanup_warning = errorMessage(cleanupFailure);
     }
     throw bodyFailure;
   }
   if (cleanupFailure) {
     onCleanupWarning?.(
-      `The operation succeeded, but its output lock could not be removed: ${errorMessage(cleanupFailure)}`,
+      `The operation succeeded, but its output lock could not be closed: ${errorMessage(cleanupFailure)}`,
     );
   }
   return bodyResult as T;
-}
-
-async function acquireDestinationLock(lockPath: string) {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const lock = await open(lockPath, "wx", 0o600);
-      await lock.writeFile(
-        `${JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() })}\n`,
-        "utf8",
-      );
-      return lock;
-    } catch (error) {
-      if (!isAlreadyExists(error)) throw error;
-      if (attempt === 0 && (await removeDeadOwnerLock(lockPath))) continue;
-      throw new DocWenMachineError(
-        "docwen_output_busy",
-        "Another DocWen write is already targeting this path.",
-      );
-    }
-  }
-  throw new DocWenMachineError("docwen_output_busy", "Another DocWen write is already targeting this path.");
-}
-
-async function removeDeadOwnerLock(lockPath: string): Promise<boolean> {
-  let before: BigIntStats;
-  let payload: unknown;
-  try {
-    before = await lstat(lockPath, { bigint: true });
-    if (!before.isFile() || before.isSymbolicLink()) return false;
-    payload = JSON.parse(await readFile(lockPath, "utf8"));
-  } catch {
-    return false;
-  }
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
-  const pid = (payload as Record<string, unknown>).pid;
-  if (!Number.isSafeInteger(pid) || (pid as number) <= 0 || processIsAlive(pid as number)) return false;
-  try {
-    const after = await lstat(lockPath, { bigint: true });
-    if (!samePathIdentity(after, pathIdentity(before))) return false;
-    await rm(lockPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function processIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !isErrno(error, "ESRCH");
-  }
 }
 
 async function assertPathStillAbsent(destination: string): Promise<void> {
@@ -1623,10 +1569,6 @@ function errorMessage(error: unknown): string {
 
 function isNotFound(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
-}
-
-function isAlreadyExists(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === "EEXIST");
 }
 
 export const clientTesting = {
