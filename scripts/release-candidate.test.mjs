@@ -259,4 +259,19 @@ describe("default branch acceptance of the actual candidate source", () => {
       "candidate_default_branch_mismatch",
     );
   });
+  it("preserves acceptance after a tooling fix follows the identical-tree squash", async () => {
+    const head = "c".repeat(40);
+    const comparison = {
+      status: "diverged",
+      merge_base_commit: { sha: "e".repeat(40) },
+      commits: [{ sha: "b".repeat(40), commit: { tree: { sha: SOURCE.tree } } }],
+    };
+    await expect(
+      assertSourceAccepted(sourceApi(head, "d".repeat(40), comparison), SOURCE, "main", head),
+    ).resolves.toBe("ancestor_same_tree");
+    comparison.commits[0].commit.tree.sha = "f".repeat(40);
+    await expect(
+      assertSourceAccepted(sourceApi(head, "d".repeat(40), comparison), SOURCE, "main", head),
+    ).rejects.toThrow("candidate_source_not_accepted");
+  });
 });

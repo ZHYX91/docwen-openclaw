@@ -9,6 +9,29 @@ import { assertSourceAccepted, loadCandidate, verifyCandidateProvenance } from "
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const stableVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 
+export async function readRelease(api, version) {
+  const published = await api.read(`releases/tags/${version}`);
+  if (published !== null) return published;
+  // GitHub's tag endpoint can omit drafts. Enumerate authenticated releases
+  // before deciding that creation is safe, then read the exact release ID.
+  const matches = [];
+  for (let page = 1; ; page++) {
+    const releases = await api.read(`releases?per_page=100&page=${page}`);
+    if (!Array.isArray(releases)) throw new Error("publication_release_list_invalid");
+    matches.push(...releases.filter((release) => release.tag_name === version));
+    if (releases.length < 100) break;
+  }
+  if (matches.length > 1) throw new Error("publication_release_ambiguous");
+  if (!matches.length) return null;
+  const match = matches[0];
+  if (!Number.isSafeInteger(match.id) || match.id <= 0)
+    throw new Error("publication_release_identity_invalid");
+  const release = await api.read(`releases/${match.id}`);
+  if (release === null || release.id !== match.id || release.tag_name !== version)
+    throw new Error("publication_release_replaced");
+  return release;
+}
+
 export function loadPublication(directory, version) {
   const candidate = loadCandidate(directory, true);
   if (candidate.record.version !== version) throw new Error("publication_version_invalid");
@@ -91,8 +114,7 @@ export async function ensureTag(api, version, commit, allowCreate = false) {
 /** Writes once, then reads authoritative state. An unknown write is never blindly repeated. */
 export async function publishRelease(api, { version, commit, files }, wait = pause) {
   await verifyTag(api, version, commit);
-  const endpoint = `releases/tags/${version}`;
-  let release = await api.read(endpoint);
+  let release = await readRelease(api, version);
   let state = inspectRelease(release, version, files);
   if (state.decision === "noop") {
     await verifyTag(api, version, commit);
@@ -112,13 +134,13 @@ export async function publishRelease(api, { version, commit, files }, wait = pau
     } catch (error) {
       failure = error;
     }
-    release = await api.read(endpoint);
+    release = await readRelease(api, version);
     if (release === null) throw failure ?? new Error("publication_draft_creation_unconfirmed");
     state = inspectRelease(release, version, files);
   }
   const releaseId = state.releaseId;
   const readState = async (allowPendingImmutable = false) => {
-    const current = await api.read(endpoint);
+    const current = await api.read(`releases/${releaseId}`);
     const inspected = inspectRelease(current, version, files, allowPendingImmutable);
     if (inspected.releaseId !== releaseId) throw new Error("publication_release_replaced");
     return inspected;
@@ -188,7 +210,7 @@ async function main() {
   const result =
     mode === "publish"
       ? await publishRelease(api, { version, commit, files })
-      : inspectRelease(await api.read(`releases/tags/${version}`), version, files);
+      : inspectRelease(await readRelease(api, version), version, files);
   if (mode === "inspect" && result.decision === "noop") await verifyTag(api, version, commit);
   process.stdout.write(
     `${JSON.stringify({ ...result, sourceAcceptance, sourceCommit: commit, sourceTree: record.source.tree })}\n`,
