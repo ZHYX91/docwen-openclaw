@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import * as path from "node:path";
 
 import { terminateProcessTree } from "../process/runner.js";
+import { validateBundleFields, validateBundlePages } from "./bundle-metadata.js";
 import { encodeMachineFrame, isJsonObject, MachineFrameDecoder, type JsonObject } from "./machine-framing.js";
 
 export type { JsonObject } from "./machine-framing.js";
@@ -453,6 +454,7 @@ export async function validateArtifactBundle(
   taskId: string,
 ): Promise<ValidatedArtifactBundle> {
   const bundle = requiredObject(value, "bundle");
+  validateBundleFields(bundle, protocolError);
   if (bundle.schema !== "docwen.artifact_bundle.v3" || bundle.task_id !== taskId) {
     throw integrityError("Artifact Bundle schema or task identity is invalid.");
   }
@@ -470,10 +472,11 @@ export async function validateArtifactBundle(
   ) {
     throw integrityError("Artifact Bundle producer identity is invalid.");
   }
-  const root = await realpath(stagingRoot);
   const rawArtifacts = objectArray(bundle.artifacts, "bundle.artifacts");
   if (rawArtifacts.length === 0) throw integrityError("Artifact Bundle is empty.");
   enforceArtifactBundleLimits(rawArtifacts);
+  validateBundlePages(bundle, integrityError);
+  const root = await realpath(stagingRoot);
   const artifactIds = new Set<string>();
   const artifactLocators = new Set<string>();
   const artifacts: ValidatedBundleArtifact[] = [];
@@ -493,7 +496,10 @@ export async function validateArtifactBundle(
     if (
       path.basename(suggestedName) !== suggestedName ||
       suggestedName.includes("\\") ||
-      suggestedName.includes("/")
+      suggestedName.includes("/") ||
+      suggestedName.includes("\0") ||
+      suggestedName === "." ||
+      suggestedName === ".."
     ) {
       throw integrityError("Artifact suggested_name must be a plain filename.");
     }
@@ -557,7 +563,7 @@ export async function validateArtifactBundle(
       throw integrityError("image entry is not a resource.");
   }
   const relations = objectArray(bundle.relations, "bundle.relations");
-  validateRelations(artifacts, entryIds, relations);
+  validateRelations(artifacts, entryIds, entries, relations);
   return {
     schema: bundle.schema,
     bundle_id: requiredString(bundle.bundle_id, "bundle.bundle_id"),
@@ -642,6 +648,7 @@ function sameFileIdentity(left: BigIntStats, right: BigIntStats): boolean {
 function validateRelations(
   artifacts: ValidatedBundleArtifact[],
   entryIds: Set<string>,
+  entries: JsonObject[],
   relations: JsonObject[],
 ): void {
   const artifactIds = new Set(artifacts.map((artifact) => artifact.artifact_id));
@@ -684,9 +691,16 @@ function validateRelations(
     if (type === "fragment_of" && (source.kind !== "fragment" || target.kind !== "document")) {
       throw integrityError("fragment_of relation kinds are invalid.");
     }
+    const manifestResourceOwner =
+      role === "manifest" &&
+      source.media_type === "application/vnd.docwen.document-node+json" &&
+      source.suggested_name === "docwen-node.json" &&
+      target.kind === "resource" &&
+      entries.some((entry) => entry.artifact_id === targetId && entry.preferred === true);
     if (
       type === "resource_of" &&
-      (source.kind !== "resource" || (target.kind !== "document" && target.kind !== "fragment"))
+      (source.kind !== "resource" ||
+        (target.kind !== "document" && target.kind !== "fragment" && !manifestResourceOwner))
     ) {
       throw integrityError("resource_of relation kinds are invalid.");
     }
@@ -696,7 +710,7 @@ function validateRelations(
       }
       structuralOwners.add(sourceId);
     }
-    if (ordinal !== null) {
+    if (ordinal !== null && !(type === "fragment_of" && role === "ocr_page")) {
       const slot = `${type}\u0000${targetId}\u0000${ordinal}`;
       if (orderedSlots.has(slot)) throw integrityError("Bundle relation ordinal is duplicated.");
       orderedSlots.add(slot);

@@ -22,6 +22,7 @@ function packageJson(overrides = {}) {
     files: [
       "dist",
       "native/linux-x64.node",
+      "native/README.md",
       "openclaw.plugin.json",
       "openclaw-config.example.json5",
       "skills",
