@@ -9,7 +9,7 @@ Typed OpenClaw tools for DocWen Machine Protocol v2 and verified `docwen.artifac
 - DocWen remains an independently installed product. The plugin never downloads, installs, upgrades, or replaces it.
 - Every call uses JSON-RPC 2.0 over Content-Length framed stdio. No DocWen argv, route ID, or legacy CLI JSON envelope enters a tool result.
 - Every Machine input has an explicit `kind`, `role`, and case-sensitive relative POSIX `logical_path`. The plugin never guesses document-relative resources from physical paths, the current directory, or disk siblings.
-- The 2.0 Gateway hosts are Windows x64 and Ubuntu 24.04 x64. `binaryPath` must be an explicit absolute path to `DocWenCLI.exe` on Windows or the executable `DocWenCLI` on Linux. Release preflight runs the packaged Machine round trip against the exact immutable DocWen 0.9 package on both platforms.
+- Supported Gateway hosts are Windows x64 and Ubuntu 24.04 x64. `binaryPath` must be an explicit absolute path to `DocWenCLI.exe` on Windows or the executable `DocWenCLI` on Linux. Release verification runs the actual plugin archive's Machine client against one pinned immutable DocWen release, version 0.12.0 or later, on both platforms. Protocol compatibility is checked separately from the product version.
 - The DocWen child receives a bounded environment that preserves the relevant platform home and profile-directory variables, temporary directories, and `DOCWEN_DATA_DIR`, `DOCWEN_CONFIG_DIR`, `DOCWEN_LOG_DIR` and truthy `DOCWEN_LOG_TO_TEMP`. DATA selects a whole profile; CONFIG and LOG override only their components. Relative selectors are resolved before changing the child working directory. Other ambient `DOCWEN_*` variables, credentials and Node options are not forwarded.
 - Accepted Artifact Bundles are limited to 256 artifacts, 512 MiB per artifact, and 1 GiB in aggregate. Artifact SHA-256 verification is streamed and fails closed if a file changes while being read.
 - Read operations do not retain converter artifacts. Persistent writes are optional and require an OpenClaw allow policy.
@@ -63,11 +63,11 @@ npx openclaw plugins validate --root . --entry ./dist/index.js
 
 Use `openclaw-config.example.json5` as the configuration shape.
 
-Final packaged-D2 acceptance uses `npm run acceptance:docwen-package`. It requires the exact extracted `DocWenCLI` path plus its SHA-256, byte size, and stable version at least 0.12.0 through `DOCWEN_TEST_BINARY`, `DOCWEN_TEST_SHA256`, `DOCWEN_TEST_SIZE_BYTES`, and `DOCWEN_TEST_VERSION`; the wrapper revalidates the candidate before and after the real Machine round trip.
+Final packaged-D2 acceptance uses `npm run acceptance:docwen-package`. It requires the exact extracted `DocWenCLI` path plus its SHA-256, byte size, and stable version at least 0.12.0 through `DOCWEN_TEST_BINARY`, `DOCWEN_TEST_SHA256`, `DOCWEN_TEST_SIZE_BYTES`, and `DOCWEN_TEST_VERSION`. Set `DOCWEN_PLUGIN_CANDIDATE_DIR` to the absolute directory containing the plugin tarball, `CANDIDATE.json` and `SHA256SUMS` from the candidate workflow. The wrapper verifies and extracts that archive into owned temporary storage, loads its compiled client, and rechecks both candidates after the real Machine round trip. It uses an isolated DocWen profile and removes successful temporary work.
 
 ## Release asset
 
-Maintainers create the 2.0.0 candidate in an explicit directory outside the repository; the command compiles once in an owned temporary directory, runs actual `npm pack`, verifies the complete archive, and writes a stable checksum manifest. Successful work is removed; failed work retains a process-bound lease under the workspace temp directory (or `build` in a standalone clone). CI and release share `check:source` and then this single package build. Build artifacts transfer by exact ID with digest mismatch rejection; reproducibility comparisons are optional engineering checks.
+Maintainers can create a local package in an explicit directory outside the repository; the command compiles once in an owned temporary directory, runs actual `npm pack`, verifies the complete archive, and writes a stable checksum manifest. Successful work is removed; failed work retains a process-bound lease under the workspace temp directory (or `build` in a standalone clone). CI and release share `check:source` and then this single package build. Build artifacts transfer by exact ID with digest mismatch rejection; reproducibility comparisons are optional engineering checks.
 
 ```bash
 npm run release:build -- /absolute/path/to/new-output-directory
@@ -78,10 +78,15 @@ The local command creates exactly these release-build outputs:
 - `openclaw-docwen-2.0.0.tgz`
 - `SHA256SUMS`
 
-The immutable GitHub Release additionally publishes `DOCWEN-CORE.json`. That canonical record pins
-one supported numeric DocWen tag and the exact Linux and Windows asset identities, sizes, and SHA-256 digests used
-by both packaged acceptance jobs. The published `SHA256SUMS` covers both the plugin tarball and this
-dependency record.
+The workflow adds `CANDIDATE.json`, which binds the version, tarball size and SHA-256 to its original repository, commit, full tree, ref, run and attempt. The tarball and this record receive provenance at build time. The immutable GitHub Release also publishes `DOCWEN-CORE.json`, pinning one supported numeric DocWen tag and the exact Linux and Windows asset identities, sizes and SHA-256 digests used by both packaged acceptance jobs. Published `SHA256SUMS` covers the other three assets.
+
+Ordinary releases use a numeric `x.y.z` tag matching `package.json`: the workflow checks source, builds once, verifies both platforms, publishes and independently reads back the result. Selected host acceptance can instead use this handoff:
+
+1. Dispatch `Release` on the candidate branch with mode `candidate` and no artifact inputs. This checks source and retains one plugin package with its original provenance, without requiring an already published Core release. Save the artifact ID and digest from the run summary and use these exact bytes for the selected host checks.
+2. Once the required Core release is public, dispatch mode `verify` with that `candidate_artifact_id` and `candidate_artifact_digest`. Both platform checks use the retained plugin bytes and one Core pin. Save the resulting publication artifact ID and digest. Omitting the artifact inputs in `verify` builds a fresh candidate first.
+3. After the default branch accepts the candidate source, dispatch mode `publish` on that branch with the verified publication ID and digest. This reuses the archive and Core pin without recompiling or rerunning completed package tests. Source acceptance requires the original commit, its ancestry, or an identical full tree after squash/rebase; the numeric tag always points to the original candidate commit.
+
+Artifact reuse verifies the exact ID, digest, repository, workflow attempt and successful producer job, then checks the original source provenance. A publication artifact remains usable if a later publishing job failed. Resume with that same publication artifact; an existing Core pin cannot silently resolve to a newer release. These modes support checks selected for the current change and do not add a standing manual approval requirement.
 
 Publication requires GitHub Immutable Releases and an active repository ruleset that prevents updates or
 deletion of numeric `x.y.z` tags. Final release state is read back through the REST `immutable: true` field.

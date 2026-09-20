@@ -13,14 +13,23 @@ import {
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { gunzipSync } from "node:zlib";
+import { URL } from "node:url";
 
 export const RELEASE_NODE_VERSION = "24.19.0";
 export const RELEASE_NPM_VERSION = "11.17.0";
 export const PACKAGE_NAME = "@zhyx91/openclaw-docwen";
-export const PACKAGE_VERSION = "2.0.0";
+export const PACKAGE_VERSION = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+).version;
+if (
+  typeof PACKAGE_VERSION !== "string" ||
+  !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(PACKAGE_VERSION)
+) {
+  throw new Error("release_package_version_invalid");
+}
 export const PACKAGE_ID = `${PACKAGE_NAME}@${PACKAGE_VERSION}`;
-export const NPM_TARBALL_FILENAME = "zhyx91-openclaw-docwen-2.0.0.tgz";
-export const RELEASE_TARBALL_FILENAME = "openclaw-docwen-2.0.0.tgz";
+export const NPM_TARBALL_FILENAME = `zhyx91-openclaw-docwen-${PACKAGE_VERSION}.tgz`;
+export const RELEASE_TARBALL_FILENAME = `openclaw-docwen-${PACKAGE_VERSION}.tgz`;
 export const SHA256SUMS_FILENAME = "SHA256SUMS";
 
 export const RELEASE_FILES = Object.freeze(

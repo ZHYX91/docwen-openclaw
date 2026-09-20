@@ -2,14 +2,20 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
 import { resolveDocWenBinary } from "./path.js";
-import { runDocWenMachineTask } from "./machine-client.js";
+import type * as PackagedMachineClient from "./machine-client.js";
 import { NEUTRAL_DOCUMENT, NUMBERING_PLAN } from "./fixtures.generated.js";
 
 const candidate = process.env.DOCWEN_MACHINE_D2_CANDIDATE;
+const pluginRoot = process.env.DOCWEN_PLUGIN_D2_ROOT;
+if (candidate && !pluginRoot) throw new Error("Packaged acceptance requires the verified plugin archive.");
+const packagedClient: typeof PackagedMachineClient | undefined = candidate
+  ? await import(pathToFileURL(join(pluginRoot!, "dist/docwen/machine-client.js")).href)
+  : undefined;
 
 const NEUTRAL_JSON = JSON.stringify(NEUTRAL_DOCUMENT);
 const PLAN_JSON = JSON.stringify(NUMBERING_PLAN);
@@ -48,7 +54,7 @@ describe.skipIf(!candidate)("DocWen Machine Protocol v2 packaged exact-two clien
       await writeFile(planPath, PLAN_JSON);
       await mkdir(staging);
 
-      const result = await runDocWenMachineTask({
+      const result = await packagedClient!.runDocWenMachineTask({
         binaryPath,
         timeoutMs: 60_000,
         request: {
@@ -74,7 +80,7 @@ describe.skipIf(!candidate)("DocWen Machine Protocol v2 packaged exact-two clien
 
       const markdownStaging = join(root, "markdown-staging");
       await mkdir(markdownStaging);
-      const roundTrip = await runDocWenMachineTask({
+      const roundTrip = await packagedClient!.runDocWenMachineTask({
         binaryPath,
         timeoutMs: 60_000,
         request: {
@@ -131,7 +137,7 @@ describe.skipIf(!candidate)("DocWen Machine Protocol v2 packaged exact-two clien
     await writeFile(planPath, PLAN_JSON);
 
     try {
-      await runDocWenMachineTask({
+      await packagedClient!.runDocWenMachineTask({
         binaryPath,
         timeoutMs: 60_000,
         request: {

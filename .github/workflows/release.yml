@@ -3,9 +3,24 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: Stable x.y.z version to preflight before creating its tag
+      mode:
+        description: Prepare a candidate, verify against public Core, or publish an accepted artifact
         required: true
+        default: verify
+        type: choice
+        options:
+          - candidate
+          - verify
+          - publish
+      candidate_artifact_id:
+        description: Exact prior artifact ID; required for publish, otherwise omit to build once
+        required: false
+        default: ""
+        type: string
+      candidate_artifact_digest:
+        description: Exact sha256 digest of the selected artifact
+        required: false
+        default: ""
         type: string
   push:
     tags:
@@ -19,16 +34,29 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'tag' }}
+  RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || '' }}
+  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+  CANDIDATE_ARTIFACT_ID: ${{ inputs.candidate_artifact_id }}
+  CANDIDATE_ARTIFACT_DIGEST: ${{ inputs.candidate_artifact_digest }}
   PUBLICATION_ARTIFACT_NAME: openclaw-docwen-publication-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
   build-release:
-    name: Verified release build
+    name: Prepare or reuse the exact plugin candidate
     outputs:
       artifact_id: ${{ steps.build.outputs.artifact-id }}
+      artifact_digest: ${{ steps.build.outputs.artifact-digest }}
+      version: ${{ steps.record.outputs.version || steps.reuse.outputs.version }}
+      source_commit: ${{ steps.record.outputs.source_commit || steps.reuse.outputs.source_commit }}
+      source_ref: ${{ steps.record.outputs.source_ref || steps.reuse.outputs.source_ref }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      attestations: write
+      id-token: write
     steps:
       - name: Check out exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -39,8 +67,22 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .node-version
-          cache: npm
-      - name: Install exact npm
+      - name: Validate the requested handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_MODE" == publish ]]; then
+            test -n "$CANDIDATE_ARTIFACT_ID"
+            test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          fi
+          if [[ -n "$CANDIDATE_ARTIFACT_ID" ]]; then
+            [[ "$CANDIDATE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+            [[ "$CANDIDATE_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          else
+            test -z "$CANDIDATE_ARTIFACT_DIGEST"
+          fi
+      - name: Install exact npm and run the full source gate
+        if: inputs.candidate_artifact_id == ''
         shell: bash
         run: |
           set -euo pipefail
@@ -48,32 +90,45 @@ jobs:
           [[ "$package_manager" =~ ^npm@[0-9]+\.[0-9]+\.[0-9]+$ ]]
           npm install --global "$package_manager"
           test "$(npm --version)" = "${package_manager#npm@}"
-      - name: Verify numeric version and source identity
-        shell: bash
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-          [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          test "$RELEASE_VERSION" = "$(node -p 'require("./package.json").version')"
-          git fetch --no-tags origin "$DEFAULT_BRANCH"
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            test "$GITHUB_SHA" = "$(git rev-parse "origin/$DEFAULT_BRANCH")"
-            if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_VERSION" >/dev/null 2>&1; then
-              echo "preflight requires an unused numeric tag" >&2
-              exit 2
-            fi
-          else
-            test "$GITHUB_REF" = "refs/tags/$RELEASE_VERSION"
-            git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"
-          fi
-      - name: Install exact lockfile and run the full gate
-        run: |
           npm ci
           npm run check:source
-      - name: Build and verify the deterministic release candidate
+      - name: Build and verify one plugin archive
+        if: inputs.candidate_artifact_id == ''
         run: npm run release:build -- "$RUNNER_TEMP/release"
-      - name: Upload the verified candidate
+      - name: Record the exact build source and bytes
+        if: inputs.candidate_artifact_id == ''
+        id: record
+        run: node scripts/release-candidate.mjs record "$RUNNER_TEMP/release"
+      - name: Attest the original candidate source
+        if: inputs.candidate_artifact_id == ''
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: |
+            ${{ runner.temp }}/release/*.tgz
+            ${{ runner.temp }}/release/CANDIDATE.json
+      - name: Verify the artifact producer in the exact workflow attempt
+        if: inputs.candidate_artifact_id != ''
+        id: transport
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-candidate.mjs artifact
+      - name: Download the exact retained artifact
+        if: inputs.candidate_artifact_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ inputs.candidate_artifact_id }}
+          run-id: ${{ steps.transport.outputs.run_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          digest-mismatch: error
+          path: ${{ runner.temp }}/release
+      - name: Verify retained bytes and original provenance
+        if: inputs.candidate_artifact_id != ''
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-candidate.mjs verify "$RUNNER_TEMP/release"
+      - name: Upload the selected candidate without rebuilding it
         id: build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -83,14 +138,23 @@ jobs:
           if-no-files-found: error
           overwrite: false
           retention-days: 30
+      - name: Record the candidate handoff
+        shell: bash
+        env:
+          ARTIFACT_ID: ${{ steps.build.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.build.outputs.artifact-digest }}
+        run: |
+          echo "Candidate artifact ID: $ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
+          echo "Candidate artifact digest: $ARTIFACT_DIGEST" >> "$GITHUB_STEP_SUMMARY"
 
   resolve-docwen:
-    name: Resolve one immutable DocWen Core release
+    if: inputs.mode != 'candidate' && inputs.mode != 'publish'
+    needs: build-release
+    name: Resolve or preserve one immutable Core pin
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       artifact_id: ${{ steps.pin.outputs.artifact-id }}
-      artifact_digest: ${{ steps.pin.outputs.artifact-digest }}
     steps:
       - name: Check out exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -100,11 +164,25 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .node-version
-      - name: Resolve both platform assets from one immutable numeric release
+      - name: Download the selected candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.build-release.outputs.artifact_id }}
+          digest-mismatch: error
+          path: ${{ runner.temp }}/candidate
+      - name: Preserve the existing pin or resolve public Core once
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/fetch-docwen-release.mjs resolve "${{ runner.temp }}/docwen-core-pin"
-      - name: Upload the sole pinned dependency record
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "$RUNNER_TEMP/candidate/DOCWEN-CORE.json" ]]; then
+            mkdir "$RUNNER_TEMP/docwen-core-pin"
+            cp "$RUNNER_TEMP/candidate/DOCWEN-CORE.json" "$RUNNER_TEMP/docwen-core-pin/"
+          else
+            node scripts/fetch-docwen-release.mjs resolve "$RUNNER_TEMP/docwen-core-pin"
+          fi
+      - name: Upload the fixed dependency record
         id: pin
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -117,7 +195,7 @@ jobs:
 
   packaged-docwen:
     name: Immutable DocWen package on ${{ matrix.platform }}
-    needs: resolve-docwen
+    needs: [build-release, resolve-docwen]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -146,6 +224,12 @@ jobs:
           [[ "$package_manager" =~ ^npm@[0-9]+\.[0-9]+\.[0-9]+$ ]]
           npm install --global "$package_manager"
           npm ci
+      - name: Download the selected plugin archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.build-release.outputs.artifact_id }}
+          digest-mismatch: error
+          path: ${{ runner.temp }}/plugin-candidate
       - name: Download the exact current-run DocWen dependency record
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -168,6 +252,7 @@ jobs:
           binary="$(find "$RUNNER_TEMP/docwen-extracted" -type f -name DocWenCLI -print -quit)"
           test -n "$binary"
           chmod +x "$binary"
+          export DOCWEN_PLUGIN_CANDIDATE_DIR="$RUNNER_TEMP/plugin-candidate"
           export DOCWEN_TEST_BINARY="$binary"
           export DOCWEN_TEST_SHA256="$(sha256sum -- "$binary" | cut -d ' ' -f 1)"
           export DOCWEN_TEST_SIZE_BYTES="$(stat -c '%s' -- "$binary")"
@@ -183,6 +268,7 @@ jobs:
           Expand-Archive -LiteralPath $record.asset.path -DestinationPath $extract
           $binary = Get-ChildItem -LiteralPath $extract -Recurse -File -Filter "DocWenCLI.exe" | Select-Object -First 1
           if ($null -eq $binary) { throw "DocWenCLI.exe missing from immutable package" }
+          $env:DOCWEN_PLUGIN_CANDIDATE_DIR = "$env:RUNNER_TEMP/plugin-candidate"
           $env:DOCWEN_TEST_BINARY = $binary.FullName
           $env:DOCWEN_TEST_SHA256 = (Get-FileHash -LiteralPath $binary.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           $env:DOCWEN_TEST_SIZE_BYTES = [string]$binary.Length
@@ -193,56 +279,60 @@ jobs:
     needs: [build-release, resolve-docwen, packaged-docwen]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    permissions:
-      actions: read
-      contents: read
     outputs:
       artifact_id: ${{ steps.publication.outputs.artifact-id }}
       artifact_digest: ${{ steps.publication.outputs.artifact-digest }}
     steps:
+      - name: Check out the verified assembly implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .node-version
       - name: Download the exact verified build
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           artifact-ids: ${{ needs.build-release.outputs.artifact_id }}
-          path: builds/candidate
+          path: ${{ runner.temp }}/candidate
           digest-mismatch: error
-      - name: Download the exact current-run DocWen dependency record
+      - name: Download the fixed DocWen dependency record
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           artifact-ids: ${{ needs.resolve-docwen.outputs.artifact_id }}
           digest-mismatch: error
-          path: dependency
-      - name: Verify and assemble the exact publication assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          (cd builds/candidate && sha256sum --check SHA256SUMS)
-          mkdir publication
-          cp "builds/candidate/openclaw-docwen-${RELEASE_VERSION}.tgz" publication/
-          cp dependency/DOCWEN-CORE.json publication/
-          (
-            cd publication
-            sha256sum DOCWEN-CORE.json "openclaw-docwen-${RELEASE_VERSION}.tgz" > SHA256SUMS
-            sha256sum --check SHA256SUMS
-          )
-      - name: Upload the sole current-run publication artifact
-        if: github.event_name == 'push'
+          path: ${{ runner.temp }}/dependency
+      - name: Assemble the verified publication without compilation
+        run: >-
+          node scripts/release-candidate.mjs assemble "$RUNNER_TEMP/candidate"
+          "$RUNNER_TEMP/publication" "$RUNNER_TEMP/dependency/DOCWEN-CORE.json"
+      - name: Retain the verified publication for publishing or recovery
         id: publication
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ env.PUBLICATION_ARTIFACT_NAME }}
-          path: publication/
+          path: ${{ runner.temp }}/publication/
           compression-level: 0
           if-no-files-found: error
           overwrite: false
           retention-days: 30
-      - name: Preflight completed without publishing
-        if: github.event_name == 'workflow_dispatch'
-        run: echo "Release preflight passed for ${RELEASE_VERSION}; no tag or Release was created."
+      - name: Record the publishable handoff
+        env:
+          ARTIFACT_ID: ${{ steps.publication.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.publication.outputs.artifact-digest }}
+        run: |
+          echo "Publication artifact ID: $ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
+          echo "Publication artifact digest: $ARTIFACT_DIGEST" >> "$GITHUB_STEP_SUMMARY"
 
   publish:
-    if: github.event_name == 'push'
-    needs: verify-release
+    if: >-
+      always() && needs.build-release.result == 'success' &&
+      ((github.event_name == 'push' && needs.verify-release.result == 'success') ||
+       (inputs.mode == 'publish' && needs.verify-release.result == 'skipped'))
+    needs: [build-release, verify-release]
+    env:
+      RELEASE_VERSION: ${{ needs.build-release.outputs.version }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -262,7 +352,7 @@ jobs:
       - name: Download the exact current-run publication artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          artifact-ids: ${{ needs.verify-release.outputs.artifact_id }}
+          artifact-ids: ${{ needs.verify-release.outputs.artifact_id || needs.build-release.outputs.artifact_id }}
           digest-mismatch: error
           path: publication
       - name: Inspect exact assets and any existing draft
@@ -278,7 +368,9 @@ jobs:
         if: steps.release_state.outputs.decision != 'noop'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
-          subject-path: publication/*
+          subject-path: |
+            publication/DOCWEN-CORE.json
+            publication/SHA256SUMS
       - name: Resume the draft and publish immutable assets
         if: steps.release_state.outputs.decision != 'noop'
         env:
@@ -286,7 +378,12 @@ jobs:
         run: node scripts/publish-release.mjs publish publication
 
   post-verify:
-    needs: [verify-release, publish]
+    if: always() && needs.publish.result == 'success'
+    needs: [build-release, verify-release, publish]
+    env:
+      RELEASE_VERSION: ${{ needs.build-release.outputs.version }}
+      SOURCE_COMMIT: ${{ needs.build-release.outputs.source_commit }}
+      SOURCE_REF: ${{ needs.build-release.outputs.source_ref }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -305,7 +402,7 @@ jobs:
       - name: Download the exact verified publication artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          artifact-ids: ${{ needs.verify-release.outputs.artifact_id }}
+          artifact-ids: ${{ needs.verify-release.outputs.artifact_id || needs.build-release.outputs.artifact_id }}
           digest-mismatch: error
           path: publication
       - name: Independently verify public bytes, provenance and immutable identity
@@ -324,7 +421,11 @@ jobs:
           for asset in publication/*; do
             name="$(basename "$asset")"
             cmp "$asset" "$RUNNER_TEMP/readback/$name"
-            gh attestation verify "$RUNNER_TEMP/readback/$name" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
+            args=(--repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" --deny-self-hosted-runners)
+            if [[ "$name" == CANDIDATE.json || "$name" == "openclaw-docwen-$RELEASE_VERSION.tgz" ]]; then
+              args+=(--source-ref "$SOURCE_REF" --source-digest "$SOURCE_COMMIT")
+            fi
+            gh attestation verify "$RUNNER_TEMP/readback/$name" "${args[@]}"
           done
           node scripts/publish-release.mjs inspect publication > "$RUNNER_TEMP/final-release-state.json"
           node -e 'if(require(process.argv[1]).decision!=="noop")process.exit(1)' "$RUNNER_TEMP/final-release-state.json"

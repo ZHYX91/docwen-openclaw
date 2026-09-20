@@ -11,7 +11,7 @@ describe("release governance", () => {
 
     expect(workflow).toContain('"[0-9]*.[0-9]*.[0-9]*"');
     expect(workflow).not.toContain('"v*"');
-    expect(releaseLibrary).toContain('RELEASE_TARBALL_FILENAME = "openclaw-docwen-2.0.0.tgz"');
+    expect(releaseLibrary).toContain("RELEASE_TARBALL_FILENAME = `openclaw-docwen-${PACKAGE_VERSION}.tgz`");
     expect(releaseLibrary).not.toContain("openclaw-docwen-v2.0.0");
     expect(readme).not.toContain("openclaw-docwen-v2.0.0");
     expect(ciWorkflow).toContain("workflow_dispatch:");
@@ -33,7 +33,12 @@ describe("release governance", () => {
     expect(workflow).toContain("Get-FileHash -LiteralPath $binary.FullName -Algorithm SHA256");
     expect(workflow).not.toContain("$record.asset.sha256");
     expect(workflow).toContain("digest-mismatch: error");
-    expect(publish).toContain("if: github.event_name == 'push'");
+    expect(publish).toContain("github.event_name == 'push'");
+    expect(publish).toContain("inputs.mode == 'publish'");
+    expect(workflow).toContain("inputs.mode != 'candidate' && inputs.mode != 'publish'");
+    expect(workflow).toContain("if: inputs.candidate_artifact_id == ''");
+    expect(workflow).toContain("scripts/release-candidate.mjs artifact");
+    expect(workflow).toContain("DOCWEN_PLUGIN_CANDIDATE_DIR");
     expect(publish).toContain("scripts/publish-release.mjs inspect publication");
     expect(publish).toContain("steps.release_state.outputs.decision != 'noop'");
     expect(publish).toContain("scripts/publish-release.mjs publish publication");

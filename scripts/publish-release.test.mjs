@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { describe, expect, it, vi } from "vitest";
-import { githubApi, inspectRelease, publishRelease, verifyTag } from "./publish-release.mjs";
+import { ensureTag, inspectRelease, publishRelease, verifyTag } from "./publish-release.mjs";
+import { githubApi } from "./release-github.mjs";
 
 const version = "3.0.0";
 const { Response, structuredClone } = globalThis;
@@ -158,6 +159,48 @@ describe("recoverable release publication", () => {
     expect(read.mock.calls[1][0]).toBe(`git/tags/${"b".repeat(40)}`);
     read.mockResolvedValue({ object: { type: "tag", sha: "b".repeat(40) } });
     await expect(verifyTag({ read }, version, commit)).rejects.toThrow("publication_tag_mismatch");
+  });
+});
+
+describe("tag creation for an accepted candidate", () => {
+  it("creates the numeric tag at the original source once and reads back a lost response", async () => {
+    let tag = null;
+    const api = {
+      read: vi.fn(async () => tag),
+      write: vi.fn(async (_method, _endpoint, body) => {
+        tag = { object: { type: "commit", sha: body.sha } };
+        throw new Error("response lost after tag creation");
+      }),
+    };
+    await ensureTag(api, version, commit, true);
+    expect(api.write).toHaveBeenCalledExactlyOnceWith("POST", "git/refs", {
+      ref: `refs/tags/${version}`,
+      sha: commit,
+    });
+    await ensureTag(api, version, commit, true);
+    expect(api.write).toHaveBeenCalledTimes(1);
+  });
+
+  it("never retargets an existing tag or creates one without manual publication context", async () => {
+    const api = {
+      read: vi.fn(async () => ({ object: { type: "commit", sha: "b".repeat(40) } })),
+      write: vi.fn(),
+    };
+    await expect(ensureTag(api, version, commit, true)).rejects.toThrow("publication_tag_mismatch");
+    api.read.mockResolvedValue(null);
+    await expect(ensureTag(api, version, commit)).rejects.toThrow("publication_tag_mismatch");
+    expect(api.write).not.toHaveBeenCalled();
+  });
+
+  it("preserves an unconfirmed creation error without attempting a second write", async () => {
+    const api = {
+      read: vi.fn(async () => null),
+      write: vi.fn(async () => {
+        throw new Error("offline");
+      }),
+    };
+    await expect(ensureTag(api, version, commit, true)).rejects.toThrow("offline");
+    expect(api.write).toHaveBeenCalledTimes(1);
   });
 });
 
