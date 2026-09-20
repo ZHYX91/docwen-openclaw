@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { clientTesting } from "./client.js";
 import { atomicCommitBundle, atomicReplaceFile, preflightOutputDirectory } from "./output-transaction.js";
-import { EXACT_TWO_MARKDOWN_TO_DOCX_CAPABILITY } from "./fixtures.generated.js";
+import { EXACT_TWO_MARKDOWN_TO_DOCX_CAPABILITY } from "./test-fixtures.js";
 import type { MachineInputHandle, ValidatedArtifactBundle } from "./machine-client.js";
 
 const roots: string[] = [];
@@ -919,6 +919,9 @@ describe("template discovery contract", () => {
     { id: "Standard" },
     { target: "xlsx" },
     { name: undefined },
+    { description: undefined },
+    { description: 42 },
+    { consumer_private: true },
   ])("rejects malformed template metadata %j", (change) => {
     expect(() => clientTesting.validateTemplateResources([{ ...template, ...change }])).toThrow(
       "Invalid or ambiguous template resource metadata",

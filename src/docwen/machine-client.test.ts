@@ -192,7 +192,35 @@ class FakeChild extends EventEmitter {
   }
 
   private notify(method: string, params: JsonObject): void {
-    this.stdout.write(encodeMachineFrame({ jsonrpc: "2.0", method, params }));
+    const fault = serverState.behavior;
+    const completed = method === "task/completed";
+    if (completed && (fault === "nonmonotonic" || fault === "wrong_progress_task")) {
+      this.stdout.write(
+        encodeMachineFrame({
+          jsonrpc: "2.0",
+          method: "task/progress",
+          params: { task_id: fault === "wrong_progress_task" ? "task.other" : "task.1", sequence: 2 },
+        }),
+      );
+    }
+    const frame = encodeMachineFrame({
+      jsonrpc: completed && fault === "wrong_jsonrpc" ? "1.0" : "2.0",
+      method,
+      params,
+    });
+    this.stdout.write(frame);
+    if (completed && fault === "duplicate_terminal") this.stdout.write(frame);
+    if (completed && fault === "progress_after_terminal") {
+      this.stdout.write(
+        encodeMachineFrame({
+          jsonrpc: "2.0",
+          method: "task/progress",
+          params: { task_id: "task.1", sequence: 2 },
+        }),
+      );
+    }
+    if (completed && fault === "truncated_after_terminal")
+      this.stdout.write(Buffer.from("Content-Length: 2\r\n\r\n{"));
   }
 }
 
@@ -285,6 +313,21 @@ describe("DocWen Machine Protocol client", () => {
       ["serve", "--stdio"],
       expect.objectContaining({ shell: false, windowsHide: true }),
     );
+  });
+
+  it.each([
+    "nonmonotonic",
+    "wrong_progress_task",
+    "wrong_jsonrpc",
+    "duplicate_terminal",
+    "progress_after_terminal",
+    "truncated_after_terminal",
+  ])("rejects %s without returning a task result", async (fault) => {
+    serverState.behavior = fault;
+    const invocation = await taskInvocation();
+    await expect(runDocWenMachineTask(invocation.options)).rejects.toMatchObject({
+      code: "docwen_machine_protocol_error",
+    });
   });
 
   it.each(["legacy_protocol", "future_minor", "reject_initialize", "wrong_server"])(

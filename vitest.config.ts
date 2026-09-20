@@ -7,7 +7,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts", "src/docwen/fixtures.generated.ts"],
+      exclude: ["src/**/*.test.ts", "src/docwen/test-fixtures.ts"],
       reporter: ["text", "json-summary"],
       thresholds: {
         statements: 67,

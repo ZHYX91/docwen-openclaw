@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import { resolveDocWenBinary } from "./path.js";
 import type * as PackagedMachineClient from "./machine-client.js";
-import { NEUTRAL_DOCUMENT, NUMBERING_PLAN } from "./fixtures.generated.js";
+import { NEUTRAL_DOCUMENT, NUMBERING_PLAN } from "./test-fixtures.js";
 
 const candidate = process.env.DOCWEN_MACHINE_D2_CANDIDATE;
 const pluginRoot = process.env.DOCWEN_PLUGIN_D2_ROOT;

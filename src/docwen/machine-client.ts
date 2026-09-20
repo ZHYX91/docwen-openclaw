@@ -154,6 +154,11 @@ class MessageQueue {
     if (message) return Promise.resolve(message);
     return new Promise((resolve, reject) => this.readers.push({ resolve, reject }));
   }
+
+  drain(): JsonObject[] {
+    if (this.failure) throw this.failure;
+    return this.messages.splice(0);
+  }
 }
 
 class MachineSession {
@@ -298,6 +303,9 @@ class MachineSession {
     this.normalClose = true;
     this.child.stdin.end();
     const code = await this.closed;
+    if (this.queue.drain().length > 0 || this.deferred.length > 0) {
+      throw protocolError("unexpected messages after the operation completed");
+    }
     const stderrText = Buffer.concat(this.stderr).toString("utf8");
     if (code !== 0) {
       throw new DocWenMachineError("docwen_machine_protocol_error", "DocWen exited with an error.", {
@@ -334,14 +342,10 @@ export async function runDocWenMachineQuery(options: {
   signal?: AbortSignal;
   locale?: string;
 }): Promise<{ initialize: JsonObject; result: JsonObject }> {
-  return withSession(
-    options,
-    async (session) => ({
-      initialize: await session.initialize(),
-      result: await session.rpc(options.method, options.params),
-    }),
-    false,
-  );
+  return withSession(options, async (session) => ({
+    initialize: await session.initialize(),
+    result: await session.rpc(options.method, options.params),
+  }));
 }
 
 export async function runDocWenMachineTask(options: {
@@ -364,6 +368,7 @@ export async function runDocWenMachineTask(options: {
     while (true) {
       const message = await session.nextMessage();
       if (message.id !== undefined) continue;
+      if (message.jsonrpc !== "2.0") throw protocolError("invalid JSON-RPC task notification");
       const params = requiredObject(message.params, "notification.params");
       if (params.task_id !== taskId) throw protocolError("notification task id does not match acceptance");
       const sequence = requiredInteger(params.sequence, "notification.sequence");
@@ -396,7 +401,6 @@ export async function runDocWenMachineTask(options: {
 async function withSession<T>(
   options: { binaryPath: string; timeoutMs: number; signal?: AbortSignal; locale?: string },
   body: (session: MachineSession, setTaskId: (taskId: string) => void) => Promise<T>,
-  initializeInBody = true,
 ): Promise<T> {
   if (options.signal?.aborted) {
     throw new DocWenMachineError("docwen_machine_cancelled", "DocWen operation was cancelled before start.");
@@ -422,16 +426,12 @@ async function withSession<T>(
   };
   options.signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    if (!initializeInBody) {
-      const result = await body(session, (value) => {
-        taskId = value;
-      });
-      await session.close();
-      return result;
-    }
     const result = await body(session, (value) => {
       taskId = value;
     });
+    if (options.signal?.aborted) {
+      throw new DocWenMachineError("docwen_machine_cancelled", "DocWen operation was cancelled.");
+    }
     await session.close();
     return result;
   } catch (error) {

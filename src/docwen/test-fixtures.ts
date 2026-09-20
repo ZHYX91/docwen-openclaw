@@ -1,4 +1,5 @@
-// GENERATED from DocWen Machine Protocol v2 conformance fixtures; consumer-specific input IDs are normalized here.
+// Consumer-authored rich numbering examples; normalized input IDs and source ranges are test data.
+// Normative, revision-bound wire examples are in contracts/docwen; this file is not generated.
 export const EXACT_TWO_MARKDOWN_TO_DOCX_CAPABILITY = {
   capability_id: "convert.markdown.to_docx",
   operation: "convert",

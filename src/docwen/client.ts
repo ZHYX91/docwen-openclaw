@@ -218,7 +218,10 @@ async function resources(
   if (target) queryParams.target = target;
   if (config.language && config.language !== "auto") queryParams.locale = config.language;
   const result = (await query(binaryPath, "resource/list", queryParams, config, signal)).result;
-  if (result.kind !== queryParams.kind) {
+  if (
+    result.kind !== queryParams.kind ||
+    Object.keys(result).some((key) => !["kind", "resources"].includes(key))
+  ) {
     throw new DocWenMachineError(
       "docwen_machine_protocol_error",
       "Resource response kind does not match the request.",
@@ -241,6 +244,9 @@ function validateTemplateResources(items: JsonObject[], target?: string): void {
     const id = item.id;
     const itemTarget = item.target;
     if (
+      Object.keys(item).some(
+        (key) => !["id", "name", "description", "target", "origin", "is_default"].includes(key),
+      ) ||
       typeof id !== "string" ||
       !/^template\.(?:docx|xlsx)\.[0-9a-f]{64}$/u.test(id) ||
       (itemTarget !== "docx" && itemTarget !== "xlsx") ||

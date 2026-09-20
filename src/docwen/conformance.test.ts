@@ -8,6 +8,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { validateArtifactBundle } from "./machine-client.js";
+import { EXACT_TWO_MARKDOWN_TO_DOCX_CAPABILITY, NEUTRAL_DOCUMENT, NUMBERING_PLAN } from "./test-fixtures.js";
 import { MachineFrameDecoder, type JsonObject } from "./machine-framing.js";
 
 type Fixture = { path: string; schema: string; document_type: string; expect: string; error_code?: string };
@@ -24,6 +25,16 @@ afterEach(async () => {
 });
 
 describe("pinned DocWen normative contract snapshot", () => {
+  it("keeps consumer-authored rich examples within the pinned wire schemas", () => {
+    expect(ajv.validate("urn:docwen:schema:resolved-document:v1", NEUTRAL_DOCUMENT)).toBe(true);
+    expect(ajv.validate("urn:docwen:schema:numbering-export-plan:v1", NUMBERING_PLAN)).toBe(true);
+    expect(
+      ajv.validate(
+        "urn:docwen:schema:machine-protocol:v2#/$defs/capability",
+        EXACT_TWO_MARKDOWN_TO_DOCX_CAPABILITY,
+      ),
+    ).toBe(true);
+  });
   it.each(["bundle", "producer", "artifact", "entry", "relation", "page_fragment", "page_resource"])(
     "rejects unknown %s fields before file access",
     async (section) => {

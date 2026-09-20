@@ -9,5 +9,5 @@
     "removeComments": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "src/**/fixtures.generated.ts"]
+  "exclude": ["src/**/*.test.ts", "src/**/test-fixtures.ts"]
 }
