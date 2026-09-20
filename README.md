@@ -86,6 +86,8 @@ dependency record.
 Publication requires GitHub Immutable Releases and an active repository ruleset that prevents updates or
 deletion of numeric `x.y.z` tags. Final release state is read back through the REST `immutable: true` field.
 
+Publication creates a draft first and resumes matching drafts by uploading only missing assets. Existing names with different bytes, incomplete uploads, or unexpected assets stop publication; nothing is overwritten or deleted. After a write loses its response, the publisher reads the release again before deciding whether the operation completed. A complete matching immutable release is a read-only no-op. One independent post-verification job downloads the public assets and checks their bytes and provenance.
+
 After obtaining that exact tarball, install it with OpenClaw:
 
 ```bash

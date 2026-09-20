@@ -251,120 +251,80 @@ jobs:
       contents: write
       id-token: write
     steps:
+      - name: Check out the verified publication implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .node-version
       - name: Download the exact current-run publication artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           artifact-ids: ${{ needs.verify-release.outputs.artifact_id }}
           digest-mismatch: error
           path: publication
-      - name: Verify fixed assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          expected="$(printf '%s\n' DOCWEN-CORE.json SHA256SUMS "openclaw-docwen-${RELEASE_VERSION}.tgz")"
-          observed="$(find publication -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
-          test "$observed" = "$expected"
-          (cd publication && sha256sum --check SHA256SUMS)
-      - name: Fail closed or select an exact immutable no-op
+      - name: Inspect exact assets and any existing draft
         id: release_state
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          release_status="$(curl --silent --show-error --location --output /tmp/release.json --write-out '%{http_code}' \
-            --header "Accept: application/vnd.github+json" \
-            --header "Authorization: Bearer $GH_TOKEN" \
-            --header "X-GitHub-Api-Version: 2026-03-10" \
-            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_VERSION")"
-          case "$release_status" in
-            200)
-              jq --exit-status --arg version "$RELEASE_VERSION" \
-                '.tag_name == $version and .draft == false and .prerelease == false and .immutable == true and ((.published_at | type) == "string") and ((.published_at | length) > 0)' \
-                /tmp/release.json >/dev/null
-              mkdir existing
-              gh release download "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir existing
-              expected="$(find publication -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
-              observed="$(find existing -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
-              test "$observed" = "$expected"
-              for asset in publication/*; do
-                cmp "$asset" "existing/$(basename "$asset")"
-                gh attestation verify "existing/$(basename "$asset")" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
-              done
-              echo "decision=noop" >> "$GITHUB_OUTPUT"
-              ;;
-            404)
-              echo "decision=create" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "GitHub Release lookup failed with HTTP $release_status" >&2
-              exit 1
-              ;;
-          esac
+          node scripts/publish-release.mjs inspect publication > "$RUNNER_TEMP/release-state.json"
+          node -e 'const s=require(process.argv[1]); process.stdout.write("decision="+s.decision+"\n")' "$RUNNER_TEMP/release-state.json" >> "$GITHUB_OUTPUT"
       - name: Attest exact assets
-        if: steps.release_state.outputs.decision == 'create'
+        if: steps.release_state.outputs.decision != 'noop'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: publication/*
-      - name: Create the immutable Release
-        if: steps.release_state.outputs.decision == 'create'
+      - name: Resume the draft and publish immutable assets
+        if: steps.release_state.outputs.decision != 'noop'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/publish-release.mjs publish publication
+
+  post-verify:
+    needs: [verify-release, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+    steps:
+      - name: Check out the verified publication implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .node-version
+      - name: Download the exact verified publication artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.verify-release.outputs.artifact_id }}
+          digest-mismatch: error
+          path: publication
+      - name: Independently verify public bytes, provenance and immutable identity
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          verify_release_tag() {
-            local direct="" peeled="" sha ref
-            while read -r sha ref; do
-              case "$ref" in
-                "refs/tags/$RELEASE_VERSION") direct="$sha" ;;
-                "refs/tags/$RELEASE_VERSION^{}") peeled="$sha" ;;
-                *) return 1 ;;
-              esac
-            done < <(git ls-remote --exit-code "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "refs/tags/$RELEASE_VERSION" "refs/tags/$RELEASE_VERSION^{}")
-            test -n "$direct"
-            test "${peeled:-$direct}" = "$GITHUB_SHA"
-          }
-          verify_release_tag
-          gh release create "$RELEASE_VERSION" publication/* --repo "$GITHUB_REPOSITORY" --verify-tag --title "$RELEASE_VERSION" --generate-notes
-          verify_release_tag
-      - name: Final immutable Release and byte readback
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in $(seq 1 10); do
-            release_status="$(curl --silent --show-error --location --output /tmp/final.json --write-out '%{http_code}' \
-              --header "Accept: application/vnd.github+json" \
-              --header "Authorization: Bearer $GH_TOKEN" \
-              --header "X-GitHub-Api-Version: 2026-03-10" \
-              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_VERSION")"
-            if [[ "$release_status" == "200" ]] && jq --exit-status --arg version "$RELEASE_VERSION" \
-              '.tag_name == $version and .draft == false and .prerelease == false and .immutable == true and ((.published_at | type) == "string") and ((.published_at | length) > 0)' \
-              /tmp/final.json >/dev/null; then
-              break
-            fi
-            test "$attempt" -lt 10
-            sleep 3
-          done
-          mkdir readback
-          gh release download "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir readback
+          node scripts/publish-release.mjs inspect publication > "$RUNNER_TEMP/final-release-state.json"
+          node -e 'if(require(process.argv[1]).decision!=="noop")process.exit(1)' "$RUNNER_TEMP/final-release-state.json"
+          mkdir "$RUNNER_TEMP/readback"
+          gh release download "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/readback"
+          expected="$(find publication -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
+          observed="$(find "$RUNNER_TEMP/readback" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
+          test "$observed" = "$expected"
           for asset in publication/*; do
             name="$(basename "$asset")"
-            cmp "$asset" "readback/$name"
-            gh attestation verify "readback/$name" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
+            cmp "$asset" "$RUNNER_TEMP/readback/$name"
+            gh attestation verify "$RUNNER_TEMP/readback/$name" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
           done
-          verify_release_tag() {
-            local direct="" peeled="" sha ref
-            while read -r sha ref; do
-              case "$ref" in
-                "refs/tags/$RELEASE_VERSION") direct="$sha" ;;
-                "refs/tags/$RELEASE_VERSION^{}") peeled="$sha" ;;
-                *) return 1 ;;
-              esac
-            done < <(git ls-remote --exit-code "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "refs/tags/$RELEASE_VERSION" "refs/tags/$RELEASE_VERSION^{}")
-            test -n "$direct"
-            test "${peeled:-$direct}" = "$GITHUB_SHA"
-          }
-          verify_release_tag
+          node scripts/publish-release.mjs inspect publication > "$RUNNER_TEMP/final-release-state.json"
+          node -e 'if(require(process.argv[1]).decision!=="noop")process.exit(1)' "$RUNNER_TEMP/final-release-state.json"
