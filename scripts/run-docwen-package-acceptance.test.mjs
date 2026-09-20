@@ -92,7 +92,7 @@ async function candidateEnvironment() {
   ownedDirectories.push(directory);
   const binaryPath = join(directory, expectedBinaryName());
   const contents = Buffer.from("exact packaged DocWen candidate", "utf8");
-  await writeFile(binaryPath, contents);
+  await writeFile(binaryPath, contents, { mode: 0o700 });
   return {
     DOCWEN_TEST_BINARY: binaryPath,
     DOCWEN_TEST_SHA256: createHash("sha256").update(contents).digest("hex"),
