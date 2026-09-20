@@ -208,6 +208,15 @@ export async function assertSourceAccepted(api, source, defaultBranch, currentCo
   ) {
     return "ancestor";
   }
+  // A squash accepted the complete candidate tree before a later tooling fix.
+  // Compare commits belong to the head side; omitted history fails closed.
+  if (
+    ["ahead", "diverged"].includes(comparison?.status) &&
+    Array.isArray(comparison?.commits) &&
+    comparison.commits.some((entry) => commitId(entry.sha) && entry.commit?.tree?.sha === source.tree)
+  ) {
+    return "ancestor_same_tree";
+  }
   throw new Error("candidate_source_not_accepted");
 }
 
