@@ -18,13 +18,19 @@ const { spawnMock, terminateProcessTreeMock, serverState } = vi.hoisted(() => ({
     cancelRequests: 0,
     corruptHash: false,
     executeSeen: false,
+    requests: [] as JsonObject[],
   },
 }));
 
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 vi.mock("../process/runner.js", () => ({ terminateProcessTree: terminateProcessTreeMock }));
 
-import { runDocWenMachineQuery, runDocWenMachineTask, validateArtifactBundle } from "./machine-client.js";
+import {
+  runDocWenMachineQuery,
+  runDocWenMachineQueries,
+  runDocWenMachineTask,
+  validateArtifactBundle,
+} from "./machine-client.js";
 
 const temporaryRoots: string[] = [];
 
@@ -78,20 +84,34 @@ class FakeChild extends EventEmitter {
 
   private handle(message: JsonObject): void {
     const id = message.id;
+    serverState.requests.push(message);
     if (message.method === "initialize") {
+      if (serverState.behavior === "reject_initialize") {
+        queueMicrotask(() =>
+          this.stdout.write(
+            encodeMachineFrame({ jsonrpc: "2.0", id, error: { code: -32602, message: "Invalid params" } }),
+          ),
+        );
+        return;
+      }
       if (serverState.behavior === "hang_initialize") return;
       this.reply(id, {
-        protocol: { name: "docwen.machine", major: 1, minor: 0 },
-        server: { name: "DocWen", version: "0.9.0" },
+        protocol: {
+          name: "docwen.machine",
+          major: serverState.behavior === "legacy_protocol" ? 1 : 2,
+          minor: serverState.behavior === "future_minor" ? 1 : 0,
+        },
+        server: { name: serverState.behavior === "wrong_server" ? "Other" : "DocWen", version: "0.9.0" },
         methods: [],
         features: { progress: true, cancellation: true },
         artifact_bundle_schema:
-          serverState.behavior === "bundle_v1" ? "docwen.artifact_bundle.v1" : "docwen.artifact_bundle.v2",
+          serverState.behavior === "bundle_v1" ? "docwen.artifact_bundle.v1" : "docwen.artifact_bundle.v3",
         max_concurrent_tasks: 1,
       });
       return;
     }
     if (message.method === "health/check") {
+      if (serverState.behavior === "hang_health") return;
       this.reply(id, { all_ok: true, checks: [] });
       return;
     }
@@ -135,10 +155,10 @@ class FakeChild extends EventEmitter {
           task_id: "task.1",
           sequence: 1,
           bundle: {
-            schema: "docwen.artifact_bundle.v2",
+            schema: "docwen.artifact_bundle.v3",
             bundle_id: "bundle.1",
             task_id: "task.1",
-            producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v1" },
+            producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },
             layout_schema: "docwen.artifact_layout.v1",
             artifacts: [
               {
@@ -178,7 +198,35 @@ class FakeChild extends EventEmitter {
   }
 
   private notify(method: string, params: JsonObject): void {
-    this.stdout.write(encodeMachineFrame({ jsonrpc: "2.0", method, params }));
+    const fault = serverState.behavior;
+    const completed = method === "task/completed";
+    if (completed && (fault === "nonmonotonic" || fault === "wrong_progress_task")) {
+      this.stdout.write(
+        encodeMachineFrame({
+          jsonrpc: "2.0",
+          method: "task/progress",
+          params: { task_id: fault === "wrong_progress_task" ? "task.other" : "task.1", sequence: 2 },
+        }),
+      );
+    }
+    const frame = encodeMachineFrame({
+      jsonrpc: completed && fault === "wrong_jsonrpc" ? "1.0" : "2.0",
+      method,
+      params,
+    });
+    this.stdout.write(frame);
+    if (completed && fault === "duplicate_terminal") this.stdout.write(frame);
+    if (completed && fault === "progress_after_terminal") {
+      this.stdout.write(
+        encodeMachineFrame({
+          jsonrpc: "2.0",
+          method: "task/progress",
+          params: { task_id: "task.1", sequence: 2 },
+        }),
+      );
+    }
+    if (completed && fault === "truncated_after_terminal")
+      this.stdout.write(Buffer.from("Content-Length: 2\r\n\r\n{"));
   }
 }
 
@@ -197,10 +245,10 @@ function artifact(artifactId: string, locator: string, bytes: Buffer, kind = "do
 
 function bundle(artifacts: JsonObject[], entries: JsonObject[], relations: JsonObject[] = []): JsonObject {
   return {
-    schema: "docwen.artifact_bundle.v2",
+    schema: "docwen.artifact_bundle.v3",
     bundle_id: "bundle.graph",
     task_id: "task.graph",
-    producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v1" },
+    producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },
     layout_schema: "docwen.artifact_layout.v1",
     artifacts,
     entries,
@@ -254,10 +302,11 @@ describe("DocWen Machine Protocol client", () => {
     serverState.cancelRequests = 0;
     serverState.corruptHash = false;
     serverState.executeSeen = false;
+    serverState.requests = [];
     spawnMock.mockImplementation(() => new FakeChild());
   });
 
-  it("initializes Machine v1 and performs a framed query", async () => {
+  it("initializes Machine v2 and performs a framed query", async () => {
     const response = await runDocWenMachineQuery({
       binaryPath: "C:\\DocWen\\DocWenCLI.exe",
       method: "health/check",
@@ -272,7 +321,126 @@ describe("DocWen Machine Protocol client", () => {
     );
   });
 
-  it("rejects a Machine server that does not declare Artifact Bundle v2", async () => {
+  it("runs related reads in one initialized process and closes it", async () => {
+    const response = await runDocWenMachineQueries({
+      binaryPath: "C:\\DocWen\\DocWenCLI.exe",
+      queries: [
+        { method: "health/check", params: {} },
+        { method: "health/check", params: {} },
+      ],
+      timeoutMs: 1_000,
+    });
+    expect(response.results).toEqual([
+      { all_ok: true, checks: [] },
+      { all_ok: true, checks: [] },
+    ]);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(serverState.requests.map((request) => request.method)).toEqual([
+      "initialize",
+      "health/check",
+      "health/check",
+    ]);
+    expect((spawnMock.mock.results[0]!.value as FakeChild).exitCode).toBe(0);
+  });
+
+  it("prepares and validates a task in the same process without caching the next operation", async () => {
+    const invocation = await taskInvocation();
+    const result = await runDocWenMachineTask({
+      ...invocation.options,
+      request: async (query) => {
+        expect(await query("health/check", {})).toEqual({ all_ok: true, checks: [] });
+        return invocation.options.request;
+      },
+    });
+    expect(result.bundle.artifacts[0]!.sha256).toMatch(/^[0-9a-f]{64}$/u);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(serverState.requests.map((request) => request.method)).toEqual([
+      "initialize",
+      "health/check",
+      "task/plan",
+      "task/execute",
+    ]);
+    await runDocWenMachineQuery({
+      binaryPath: invocation.options.binaryPath,
+      method: "health/check",
+      params: {},
+      timeoutMs: 1_000,
+    });
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["cancel", "reject"])("does not plan a task when preparation ends with %s", async (reason) => {
+    const controller = new AbortController();
+    const invocation = await taskInvocation(1_000, controller.signal);
+    const failure = new Error("preparation rejected");
+    const operation = runDocWenMachineTask({
+      ...invocation.options,
+      request: async (query) => {
+        await query("health/check", {});
+        if (reason === "reject") throw failure;
+        controller.abort();
+        return invocation.options.request;
+      },
+    });
+    if (reason === "reject") await expect(operation).rejects.toBe(failure);
+    else await expect(operation).rejects.toMatchObject({ code: "docwen_machine_cancelled" });
+    expect(serverState.executeSeen).toBe(false);
+    expect(serverState.requests.map((request) => request.method)).toEqual(["initialize", "health/check"]);
+    expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains the read deadline inside a longer task deadline", async () => {
+    serverState.behavior = "hang_health";
+    const invocation = await taskInvocation(5_000);
+    await expect(
+      runDocWenMachineTask({
+        ...invocation.options,
+        readTimeoutMs: 20,
+        request: async (query) => {
+          await query("health/check", {});
+          return invocation.options.request;
+        },
+      }),
+    ).rejects.toMatchObject({ code: "docwen_machine_timeout", details: { timeoutMs: 20 } });
+    expect(serverState.executeSeen).toBe(false);
+    expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "nonmonotonic",
+    "wrong_progress_task",
+    "wrong_jsonrpc",
+    "duplicate_terminal",
+    "progress_after_terminal",
+    "truncated_after_terminal",
+  ])("rejects %s without returning a task result", async (fault) => {
+    serverState.behavior = fault;
+    const invocation = await taskInvocation();
+    await expect(runDocWenMachineTask(invocation.options)).rejects.toMatchObject({
+      code: "docwen_machine_protocol_error",
+    });
+  });
+
+  it.each(["legacy_protocol", "future_minor", "reject_initialize", "wrong_server"])(
+    "rejects %s before sending a resource or task request",
+    async (behavior) => {
+      serverState.behavior = behavior;
+      await expect(
+        runDocWenMachineQuery({
+          binaryPath: "C:\\DocWen\\DocWenCLI.exe",
+          method: "resource/list",
+          params: { kind: "templates" },
+          timeoutMs: 1_000,
+        }),
+      ).rejects.toMatchObject({ code: "docwen_machine_incompatible_version" });
+      expect(serverState.requests.map((request) => request.method)).toEqual(["initialize"]);
+      expect(serverState.requests[0]!.params).toMatchObject({
+        protocol: { name: "docwen.machine", major: 2, minor: 0 },
+      });
+    },
+  );
+
+  it("rejects a Machine server that does not declare Artifact Bundle v3", async () => {
     serverState.behavior = "bundle_v1";
 
     await expect(
@@ -311,15 +479,10 @@ describe("DocWen Machine Protocol client", () => {
       PYTHONIOENCODING: "utf-8",
       PYTHONUTF8: "1",
     });
-    for (const key of [
-      "DOCWEN_API_TOKEN",
-      "DOCWEN_UNKNOWN",
-      "AWS_SECRET_ACCESS_KEY",
-      "NODE_OPTIONS",
-      "HOME",
-    ]) {
+    for (const key of ["DOCWEN_API_TOKEN", "DOCWEN_UNKNOWN", "AWS_SECRET_ACCESS_KEY", "NODE_OPTIONS"]) {
       expect(environment).not.toHaveProperty(key);
     }
+    if (process.platform !== "win32") expect(environment.HOME).toBe("C:\\sensitive-home");
   });
 
   it("drops empty and false DocWen isolation hook values", async () => {
@@ -338,6 +501,24 @@ describe("DocWen Machine Protocol client", () => {
     expect(environment).not.toHaveProperty("DOCWEN_CONFIG_DIR");
     expect(environment).not.toHaveProperty("DOCWEN_LOG_DIR");
     expect(environment).not.toHaveProperty("DOCWEN_LOG_TO_TEMP");
+  });
+
+  it("preserves system profile roots and resolves relative profile selection before changing child cwd", async () => {
+    const profileKeys =
+      process.platform === "win32"
+        ? ["USERPROFILE", "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH"]
+        : ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"];
+    for (const key of profileKeys) vi.stubEnv(key, `profile-${key}`);
+    vi.stubEnv("DOCWEN_DATA_DIR", "./selected-profile");
+    await runDocWenMachineQuery({
+      binaryPath: "C:\\DocWen\\DocWenCLI.exe",
+      method: "health/check",
+      params: {},
+      timeoutMs: 1_000,
+    });
+    const environment = spawnMock.mock.calls[0]![2].env as NodeJS.ProcessEnv;
+    for (const key of profileKeys) expect(environment[key]).toBe(`profile-${key}`);
+    expect(environment.DOCWEN_DATA_DIR).toBe(path.resolve("./selected-profile"));
   });
 
   it("validates every artifact before returning a completed task", async () => {
@@ -375,7 +556,7 @@ describe("DocWen Machine Protocol client", () => {
     });
   });
 
-  it("validates Bundle v2 logical paths and document-node manifest relations", async () => {
+  it("validates Bundle v3 logical paths and document-node manifest relations", async () => {
     const root = await temporaryRoot();
     const documentBytes = Buffer.from("# document\n", "utf8");
     const manifestBytes = Buffer.from("{}\n", "utf8");
@@ -386,10 +567,10 @@ describe("DocWen Machine Protocol client", () => {
     const manifest = artifact("resource.manifest", "node.json", manifestBytes, "resource");
     manifest.logical_path = "report/.docwen/document-node.json";
     const value = {
-      schema: "docwen.artifact_bundle.v2",
+      schema: "docwen.artifact_bundle.v3",
       bundle_id: "bundle.v2",
       task_id: "task.graph",
-      producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v1" },
+      producer: { name: "DocWen", product_version: "0.9.0", machine_protocol: "docwen.machine.v2" },
       layout_schema: "docwen.document_node.v1",
       artifacts: [document, manifest],
       entries: [{ artifact_id: "document.1", role: "primary", ordinal: 0, preferred: true }],
@@ -404,7 +585,7 @@ describe("DocWen Machine Protocol client", () => {
     };
 
     await expect(validateArtifactBundle(value, root, "task.graph")).resolves.toMatchObject({
-      schema: "docwen.artifact_bundle.v2",
+      schema: "docwen.artifact_bundle.v3",
       layout_schema: "docwen.document_node.v1",
       artifacts: [
         { artifact_id: "document.1", logical_path: "report/document.md" },

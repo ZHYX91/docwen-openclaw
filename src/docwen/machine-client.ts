@@ -2,15 +2,18 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { BigIntStats } from "node:fs";
 import { lstat, open, realpath, stat } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import * as path from "node:path";
 
 import { terminateProcessTree } from "../process/runner.js";
+import { validateBundleFields, validateBundlePages } from "./bundle-metadata.js";
 import { encodeMachineFrame, isJsonObject, MachineFrameDecoder, type JsonObject } from "./machine-framing.js";
 
 export type { JsonObject } from "./machine-framing.js";
 
 const CLIENT_NAME = "DocWen OpenClaw";
-const CLIENT_VERSION = "2.0.0";
+const CLIENT_VERSION = (createRequire(import.meta.url)("../../package.json") as { version: string }).version;
 const STDERR_LIMIT_BYTES = 256 * 1024;
 const MAX_ARTIFACT_COUNT = 256;
 const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
@@ -61,6 +64,7 @@ export type MachineTaskRequest = {
 export type MachineCapability = {
   capability_id: string;
   operation: string;
+  optimization_id?: string;
   input_shape: {
     slots: Array<{
       role: MachineInputRole;
@@ -97,13 +101,13 @@ export type ValidatedBundleArtifact = {
 };
 
 export type ValidatedArtifactBundle = {
-  schema: "docwen.artifact_bundle.v2";
+  schema: "docwen.artifact_bundle.v3";
   bundle_id: string;
   task_id: string;
   producer: {
     name: "DocWen";
     product_version: string;
-    machine_protocol: "docwen.machine.v1";
+    machine_protocol: "docwen.machine.v2";
   };
   layout_schema: "docwen.artifact_layout.v1" | "docwen.document_node.v1";
   artifacts: ValidatedBundleArtifact[];
@@ -149,6 +153,15 @@ class MessageQueue {
     const message = this.messages.shift();
     if (message) return Promise.resolve(message);
     return new Promise((resolve, reject) => this.readers.push({ resolve, reject }));
+  }
+
+  drain(): JsonObject[] {
+    if (this.failure) throw this.failure;
+    return this.messages.splice(0);
+  }
+
+  throwIfFailed(): void {
+    if (this.failure) throw this.failure;
   }
 }
 
@@ -221,23 +234,45 @@ class MachineSession {
 
   async initialize(): Promise<JsonObject> {
     const result = await this.rpc("initialize", {
-      protocol: { name: "docwen.machine", major: 1, minor: 0 },
+      protocol: { name: "docwen.machine", major: 2, minor: 0 },
       client: { name: CLIENT_NAME, version: CLIENT_VERSION },
       features: { progress: true, cancellation: true },
     });
     const protocol = requiredObject(result.protocol, "initialize.protocol");
     if (
       protocol.name !== "docwen.machine" ||
-      protocol.major !== 1 ||
+      protocol.major !== 2 ||
       protocol.minor !== 0 ||
-      result.artifact_bundle_schema !== "docwen.artifact_bundle.v2"
+      result.artifact_bundle_schema !== "docwen.artifact_bundle.v3"
     ) {
       throw new DocWenMachineError(
         "docwen_machine_incompatible_version",
-        "DocWen Machine Protocol v1 and Artifact Bundle v2 are required.",
+        "DocWen Machine Protocol v2 and Artifact Bundle v3 are required.",
+      );
+    }
+    const server = requiredObject(result.server, "initialize.server");
+    requiredString(server.version, "initialize.server.version");
+    if (server.name !== "DocWen") {
+      throw new DocWenMachineError(
+        "docwen_machine_incompatible_version",
+        "The Machine server is not DocWen.",
       );
     }
     return result;
+  }
+
+  async query(method: string, params: JsonObject, timeoutMs: number): Promise<JsonObject> {
+    const timer = setTimeout(() => {
+      this.fail(
+        new DocWenMachineError("docwen_machine_timeout", "DocWen Machine query timed out.", { timeoutMs }),
+      );
+      void this.terminate();
+    }, timeoutMs);
+    try {
+      return await this.rpc(method, params);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async rpc(method: string, params: JsonObject): Promise<JsonObject> {
@@ -250,7 +285,15 @@ class MachineSession {
         continue;
       }
       if (message.jsonrpc !== "2.0") throw protocolError(`invalid JSON-RPC response for ${method}`);
-      if (isJsonObject(message.error)) throw remoteRpcError(message.error);
+      if (isJsonObject(message.error)) {
+        if (method === "initialize" && message.error.code === -32602) {
+          throw new DocWenMachineError(
+            "docwen_machine_incompatible_version",
+            "DocWen Machine Protocol 2.0 is required. Update DocWen and its client together.",
+          );
+        }
+        throw remoteRpcError(message.error);
+      }
       return requiredObject(message.result, `${method}.result`);
     }
   }
@@ -278,6 +321,9 @@ class MachineSession {
     this.normalClose = true;
     this.child.stdin.end();
     const code = await this.closed;
+    if (this.queue.drain().length > 0 || this.deferred.length > 0) {
+      throw protocolError("unexpected messages after the operation completed");
+    }
     const stderrText = Buffer.concat(this.stderr).toString("utf8");
     if (code !== 0) {
       throw new DocWenMachineError("docwen_machine_protocol_error", "DocWen exited with an error.", {
@@ -301,10 +347,13 @@ class MachineSession {
   }
 
   private send(message: JsonObject): void {
+    this.queue.throwIfFailed();
     if (this.child.stdin.destroyed) throw protocolError("DocWen stdin is closed");
     this.child.stdin.write(encodeMachineFrame(message));
   }
 }
+
+export type MachineQuery = (method: string, params: JsonObject) => Promise<JsonObject>;
 
 export async function runDocWenMachineQuery(options: {
   binaryPath: string;
@@ -314,26 +363,45 @@ export async function runDocWenMachineQuery(options: {
   signal?: AbortSignal;
   locale?: string;
 }): Promise<{ initialize: JsonObject; result: JsonObject }> {
-  return withSession(
-    options,
-    async (session) => ({
-      initialize: await session.initialize(),
-      result: await session.rpc(options.method, options.params),
-    }),
-    false,
-  );
+  const { initialize, results } = await runDocWenMachineQueries({
+    ...options,
+    queries: [{ method: options.method, params: options.params }],
+  });
+  return { initialize, result: results[0]! };
+}
+
+export async function runDocWenMachineQueries(options: {
+  binaryPath: string;
+  queries: readonly { method: string; params: JsonObject }[];
+  timeoutMs: number;
+  signal?: AbortSignal;
+  locale?: string;
+}): Promise<{ initialize: JsonObject; results: JsonObject[] }> {
+  return withSession(options, async (session) => {
+    const initialize = await session.initialize();
+    const results: JsonObject[] = [];
+    for (const query of options.queries) results.push(await session.rpc(query.method, query.params));
+    return { initialize, results };
+  });
 }
 
 export async function runDocWenMachineTask(options: {
   binaryPath: string;
-  request: MachineTaskRequest;
+  request: MachineTaskRequest | ((query: MachineQuery) => Promise<MachineTaskRequest>);
   timeoutMs: number;
+  readTimeoutMs?: number;
   signal?: AbortSignal;
   locale?: string;
 }): Promise<MachineTaskCompleted> {
   return withSession(options, async (session, setTaskId) => {
     await session.initialize();
-    const plan = await session.rpc("task/plan", options.request);
+    const request =
+      typeof options.request === "function"
+        ? await options.request((method, params) =>
+            session.query(method, params, options.readTimeoutMs ?? 30_000),
+          )
+        : options.request;
+    const plan = await session.rpc("task/plan", request);
     const planId = requiredString(plan.plan_id, "task/plan.plan_id");
     const acceptance = await session.rpc("task/execute", { plan_id: planId });
     const taskId = requiredString(acceptance.task_id, "task/execute.task_id");
@@ -344,6 +412,7 @@ export async function runDocWenMachineTask(options: {
     while (true) {
       const message = await session.nextMessage();
       if (message.id !== undefined) continue;
+      if (message.jsonrpc !== "2.0") throw protocolError("invalid JSON-RPC task notification");
       const params = requiredObject(message.params, "notification.params");
       if (params.task_id !== taskId) throw protocolError("notification task id does not match acceptance");
       const sequence = requiredInteger(params.sequence, "notification.sequence");
@@ -364,7 +433,7 @@ export async function runDocWenMachineTask(options: {
       return {
         taskId,
         plan,
-        bundle: await validateArtifactBundle(params.bundle, options.request.output.staging_root.path, taskId),
+        bundle: await validateArtifactBundle(params.bundle, request.output.staging_root.path, taskId),
         diagnostics: objectArray(params.diagnostics, "terminal.diagnostics"),
         metrics: requiredObject(params.metrics, "terminal.metrics"),
         progress,
@@ -376,7 +445,6 @@ export async function runDocWenMachineTask(options: {
 async function withSession<T>(
   options: { binaryPath: string; timeoutMs: number; signal?: AbortSignal; locale?: string },
   body: (session: MachineSession, setTaskId: (taskId: string) => void) => Promise<T>,
-  initializeInBody = true,
 ): Promise<T> {
   if (options.signal?.aborted) {
     throw new DocWenMachineError("docwen_machine_cancelled", "DocWen operation was cancelled before start.");
@@ -402,16 +470,12 @@ async function withSession<T>(
   };
   options.signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    if (!initializeInBody) {
-      const result = await body(session, (value) => {
-        taskId = value;
-      });
-      await session.close();
-      return result;
-    }
     const result = await body(session, (value) => {
       taskId = value;
     });
+    if (options.signal?.aborted) {
+      throw new DocWenMachineError("docwen_machine_cancelled", "DocWen operation was cancelled.");
+    }
     await session.close();
     return result;
   } catch (error) {
@@ -434,7 +498,8 @@ export async function validateArtifactBundle(
   taskId: string,
 ): Promise<ValidatedArtifactBundle> {
   const bundle = requiredObject(value, "bundle");
-  if (bundle.schema !== "docwen.artifact_bundle.v2" || bundle.task_id !== taskId) {
+  validateBundleFields(bundle, protocolError);
+  if (bundle.schema !== "docwen.artifact_bundle.v3" || bundle.task_id !== taskId) {
     throw integrityError("Artifact Bundle schema or task identity is invalid.");
   }
   const layoutSchema = bundle.layout_schema;
@@ -445,16 +510,17 @@ export async function validateArtifactBundle(
   const producer = requiredObject(bundle.producer, "bundle.producer");
   if (
     producer.name !== "DocWen" ||
-    producer.machine_protocol !== "docwen.machine.v1" ||
+    producer.machine_protocol !== "docwen.machine.v2" ||
     typeof producer.product_version !== "string" ||
     producer.product_version.length === 0
   ) {
     throw integrityError("Artifact Bundle producer identity is invalid.");
   }
-  const root = await realpath(stagingRoot);
   const rawArtifacts = objectArray(bundle.artifacts, "bundle.artifacts");
   if (rawArtifacts.length === 0) throw integrityError("Artifact Bundle is empty.");
   enforceArtifactBundleLimits(rawArtifacts);
+  validateBundlePages(bundle, integrityError);
+  const root = await realpath(stagingRoot);
   const artifactIds = new Set<string>();
   const artifactLocators = new Set<string>();
   const artifacts: ValidatedBundleArtifact[] = [];
@@ -474,7 +540,10 @@ export async function validateArtifactBundle(
     if (
       path.basename(suggestedName) !== suggestedName ||
       suggestedName.includes("\\") ||
-      suggestedName.includes("/")
+      suggestedName.includes("/") ||
+      suggestedName.includes("\0") ||
+      suggestedName === "." ||
+      suggestedName === ".."
     ) {
       throw integrityError("Artifact suggested_name must be a plain filename.");
     }
@@ -538,7 +607,7 @@ export async function validateArtifactBundle(
       throw integrityError("image entry is not a resource.");
   }
   const relations = objectArray(bundle.relations, "bundle.relations");
-  validateRelations(artifacts, entryIds, relations);
+  validateRelations(artifacts, entryIds, entries, relations);
   return {
     schema: bundle.schema,
     bundle_id: requiredString(bundle.bundle_id, "bundle.bundle_id"),
@@ -546,7 +615,7 @@ export async function validateArtifactBundle(
     producer: {
       name: "DocWen",
       product_version: producer.product_version,
-      machine_protocol: "docwen.machine.v1",
+      machine_protocol: "docwen.machine.v2",
     },
     layout_schema: validatedLayoutSchema,
     artifacts,
@@ -623,6 +692,7 @@ function sameFileIdentity(left: BigIntStats, right: BigIntStats): boolean {
 function validateRelations(
   artifacts: ValidatedBundleArtifact[],
   entryIds: Set<string>,
+  entries: JsonObject[],
   relations: JsonObject[],
 ): void {
   const artifactIds = new Set(artifacts.map((artifact) => artifact.artifact_id));
@@ -665,9 +735,16 @@ function validateRelations(
     if (type === "fragment_of" && (source.kind !== "fragment" || target.kind !== "document")) {
       throw integrityError("fragment_of relation kinds are invalid.");
     }
+    const manifestResourceOwner =
+      role === "manifest" &&
+      source.media_type === "application/vnd.docwen.document-node+json" &&
+      source.suggested_name === "docwen-node.json" &&
+      target.kind === "resource" &&
+      entries.some((entry) => entry.artifact_id === targetId && entry.preferred === true);
     if (
       type === "resource_of" &&
-      (source.kind !== "resource" || (target.kind !== "document" && target.kind !== "fragment"))
+      (source.kind !== "resource" ||
+        (target.kind !== "document" && target.kind !== "fragment" && !manifestResourceOwner))
     ) {
       throw integrityError("resource_of relation kinds are invalid.");
     }
@@ -677,7 +754,7 @@ function validateRelations(
       }
       structuralOwners.add(sourceId);
     }
-    if (ordinal !== null) {
+    if (ordinal !== null && !(type === "fragment_of" && role === "ocr_page")) {
       const slot = `${type}\u0000${targetId}\u0000${ordinal}`;
       if (orderedSlots.has(slot)) throw integrityError("Bundle relation ordinal is duplicated.");
       orderedSlots.add(slot);
@@ -821,12 +898,28 @@ function errorMessage(error: unknown): string {
 }
 
 function boundedEnvironment(locale?: string): NodeJS.ProcessEnv {
-  const bootstrapKeys = ["SystemRoot", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "TEMP", "TMP"];
+  const bootstrapKeys = [
+    "SystemRoot",
+    "WINDIR",
+    "COMSPEC",
+    "PATH",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+  ];
   const env: NodeJS.ProcessEnv = {};
   for (const key of bootstrapKeys) if (process.env[key]) env[key] = process.env[key];
-  for (const key of ["DOCWEN_CONFIG_DIR", "DOCWEN_LOG_DIR"] as const) {
+  const profileKeys =
+    process.platform === "win32"
+      ? ["USERPROFILE", "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH"]
+      : ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"];
+  for (const key of profileKeys) if (process.env[key]) env[key] = process.env[key];
+  for (const key of ["DOCWEN_CONFIG_DIR", "DOCWEN_DATA_DIR", "DOCWEN_LOG_DIR"] as const) {
     const value = process.env[key]?.trim();
-    if (value && !value.includes("\u0000")) env[key] = value;
+    if (value) env[key] = profileDirectory(value);
   }
   const logToTemp = process.env.DOCWEN_LOG_TO_TEMP?.trim().toLowerCase();
   if (logToTemp && ["1", "true", "yes", "on"].includes(logToTemp)) {
@@ -837,4 +930,13 @@ function boundedEnvironment(locale?: string): NodeJS.ProcessEnv {
   env.PYTHONIOENCODING = "utf-8";
   env.PYTHONUTF8 = "1";
   return env;
+}
+
+function profileDirectory(value: string): string {
+  if (value.includes("\u0000")) throw new Error("DocWen profile directory contains a NUL character.");
+  const expanded =
+    value === "~" || value.startsWith("~/") || (process.platform === "win32" && value.startsWith("~\\"))
+      ? path.join(homedir(), value.slice(2))
+      : value;
+  return path.isAbsolute(expanded) || path.win32.isAbsolute(expanded) ? expanded : path.resolve(expanded);
 }

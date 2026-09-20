@@ -14,4 +14,4 @@
 
    Markdown 转 DOCX 使用解析后的精确两输入合同，不接受上面的普通 `source` 形式：一个 `{kind="document", role="neutral_document"}` JSON 和一个 `{kind="resource", role="numbering_export_plan"}` JSON，二者都必须有独立的 `logicalPath`，且不得再附加 `linked_resource`、书目或引用样式输入。
 
-3. 从 Machine v1 结果中报告 `preferred_artifact` 和全部 `artifacts`。目录内的 `.docwen-artifact-bundle.json` 保留完整语义关系。
+3. 从 Machine v2 结果中报告 `preferred_artifact` 和全部 `artifacts`。产物关系与完整性信息保留在结构化结果中；输出目录只包含实际文档和资源。

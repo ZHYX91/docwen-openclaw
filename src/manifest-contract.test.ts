@@ -19,7 +19,7 @@ describe("package and manifest contracts", () => {
       configSchema: { required?: string[]; properties: Record<string, unknown> };
     };
     expect(manifest.contracts.tools).toEqual(TOOL_NAMES);
-    expect(manifest.version).toBe("2.0.0");
+    expect(manifest.version).toBe("3.0.0");
     expect(manifest.configSchema.required ?? []).not.toContain("binaryPath");
     expect(manifest.configSchema.properties.binaryPath).toEqual({ type: "string", minLength: 1 });
     expect(Object.keys(manifest.toolMetadata)).toEqual(TOOL_NAMES);
@@ -34,7 +34,7 @@ describe("package and manifest contracts", () => {
       files: string[];
       openclaw: { extensions: string[]; compat: { pluginApi: string } };
     };
-    expect(pkg.version).toBe("2.0.0");
+    expect(pkg.version).toBe("3.0.0");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { version: string };
     expect(pkg.version).toBe(manifest.version);
     expect(pkg.type).toBe("module");

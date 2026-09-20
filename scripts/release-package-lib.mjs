@@ -13,24 +13,48 @@ import {
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { gunzipSync } from "node:zlib";
+import { URL } from "node:url";
 
 export const RELEASE_NODE_VERSION = "24.19.0";
 export const RELEASE_NPM_VERSION = "11.17.0";
 export const PACKAGE_NAME = "@zhyx91/openclaw-docwen";
-export const PACKAGE_VERSION = "2.0.0";
+export const PACKAGE_VERSION = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+).version;
+if (
+  typeof PACKAGE_VERSION !== "string" ||
+  !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(PACKAGE_VERSION)
+) {
+  throw new Error("release_package_version_invalid");
+}
 export const PACKAGE_ID = `${PACKAGE_NAME}@${PACKAGE_VERSION}`;
-export const NPM_TARBALL_FILENAME = "zhyx91-openclaw-docwen-2.0.0.tgz";
-export const RELEASE_TARBALL_FILENAME = "openclaw-docwen-2.0.0.tgz";
+export const NPM_TARBALL_FILENAME = `zhyx91-openclaw-docwen-${PACKAGE_VERSION}.tgz`;
+export const RELEASE_TARBALL_FILENAME = `openclaw-docwen-${PACKAGE_VERSION}.tgz`;
 export const SHA256SUMS_FILENAME = "SHA256SUMS";
 
 export const RELEASE_FILES = Object.freeze(
   [
     "LICENSE",
     "README.md",
+    "native/README.md",
     "dist/config.d.ts",
     "dist/config.js",
+    "dist/docwen/bundle-metadata.d.ts",
+    "dist/docwen/bundle-metadata.js",
     "dist/docwen/client.d.ts",
     "dist/docwen/client.js",
+    "dist/docwen/diagnostics.d.ts",
+    "dist/docwen/diagnostics.js",
+    "dist/docwen/file-integrity.d.ts",
+    "dist/docwen/file-integrity.js",
+    "dist/docwen/output-lock.d.ts",
+    "dist/docwen/output-lock.js",
+    "dist/docwen/output-transaction.d.ts",
+    "dist/docwen/output-transaction.js",
+    "dist/docwen/publication.d.ts",
+    "dist/docwen/publication.js",
+    "dist/docwen/publish-path.d.ts",
+    "dist/docwen/publish-path.js",
     "dist/docwen/machine-client.d.ts",
     "dist/docwen/machine-client.js",
     "dist/docwen/machine-framing.d.ts",
@@ -48,6 +72,7 @@ export const RELEASE_FILES = Object.freeze(
     "dist/tools/definitions.d.ts",
     "dist/tools/definitions.js",
     "openclaw-config.example.json5",
+    "native/linux-x64.node",
     "openclaw.plugin.json",
     "package.json",
     "skills/docwen/SKILL.md",
@@ -116,7 +141,16 @@ function verifyPackageIdentity(entries) {
   if (pkg.license !== "MIT") fail("release_package_license_invalid");
   assertExactArray(
     pkg.files,
-    ["dist", "openclaw.plugin.json", "openclaw-config.example.json5", "skills", "README.md", "LICENSE"],
+    [
+      "dist",
+      "native/linux-x64.node",
+      "native/README.md",
+      "openclaw.plugin.json",
+      "openclaw-config.example.json5",
+      "skills",
+      "README.md",
+      "LICENSE",
+    ],
     "release_package_files_field_invalid",
   );
 
@@ -127,7 +161,7 @@ function verifyPackageIdentity(entries) {
     fail("release_openclaw_compat_invalid");
   }
   const build = assertPlainObject(openclaw.build, "release_openclaw_build_invalid");
-  if (build.openclawVersion !== "2026.7.1-2" || build.pluginSdkVersion !== "2026.7.1-2") {
+  if (build.openclawVersion !== "2026.9.5" || build.pluginSdkVersion !== "2026.9.5") {
     fail("release_openclaw_build_invalid");
   }
   const peers = assertPlainObject(pkg.peerDependencies, "release_peer_dependencies_invalid");
@@ -315,12 +349,6 @@ export function verifyTarballBuffer(tarball, expectedReport) {
   return { sha256, entries: parsed.entries };
 }
 
-export function assertIdenticalReleaseTarballs(first, second) {
-  if (!Buffer.isBuffer(first) || !Buffer.isBuffer(second) || !first.equals(second)) {
-    fail("release_tarball_nondeterministic");
-  }
-}
-
 export function formatSha256Sums(sha256) {
   if (!/^[a-f0-9]{64}$/.test(sha256)) fail("release_sha256_invalid");
   return `${sha256}  ${RELEASE_TARBALL_FILENAME}\n`;
@@ -405,11 +433,11 @@ function walkRegularFiles(root, current = root) {
   return result;
 }
 
-export function buildIsolatedReleasePass(repoRoot, passRoot, npmCli) {
-  const packageRoot = join(passRoot, "package");
-  const packDestination = join(passRoot, "pack");
-  const temporaryDirectory = join(passRoot, "tmp");
-  const npmCache = join(passRoot, "npm-cache");
+export function buildReleaseCandidate(repoRoot, workRoot, npmCli) {
+  const packageRoot = join(workRoot, "package");
+  const packDestination = join(workRoot, "pack");
+  const temporaryDirectory = join(workRoot, "tmp");
+  const npmCache = join(workRoot, "npm-cache");
   mkdirSync(packageRoot, { recursive: true });
   mkdirSync(temporaryDirectory, { recursive: true });
   mkdirSync(npmCache, { recursive: true });
@@ -422,6 +450,7 @@ export function buildIsolatedReleasePass(repoRoot, passRoot, npmCli) {
     ...process.env,
     TEMP: temporaryDirectory,
     TMP: temporaryDirectory,
+    TMPDIR: temporaryDirectory,
     npm_config_cache: npmCache,
   };
   runChecked(

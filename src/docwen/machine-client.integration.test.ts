@@ -2,17 +2,29 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
 import { resolveDocWenBinary } from "./path.js";
-import { runDocWenMachineTask } from "./machine-client.js";
-import { NEUTRAL_DOCUMENT, NUMBERING_PLAN } from "./fixtures.generated.js";
+import type * as PackagedMachineClient from "./machine-client.js";
+import { NEUTRAL_DOCUMENT, NUMBERING_PLAN } from "./test-fixtures.js";
 
 const candidate = process.env.DOCWEN_MACHINE_D2_CANDIDATE;
+const pluginRoot = process.env.DOCWEN_PLUGIN_D2_ROOT;
+if (candidate && !pluginRoot) throw new Error("Packaged acceptance requires the verified plugin archive.");
+const packagedClient: typeof PackagedMachineClient | undefined = candidate
+  ? await import(pathToFileURL(join(pluginRoot!, "dist/docwen/machine-client.js")).href)
+  : undefined;
 
 const NEUTRAL_JSON = JSON.stringify(NEUTRAL_DOCUMENT);
 const PLAN_JSON = JSON.stringify(NUMBERING_PLAN);
+const SEMANTIC_EXTENSIONS = {
+  structural_tables: true,
+  captions_references: true,
+  extended_headings: true,
+  typed_endnotes: true,
+};
 
 const neutralInput = (neutral: object) => ({
   input_id: "input.neutral-document",
@@ -36,7 +48,7 @@ const planInput = {
   sha256: createHash("sha256").update(PLAN_JSON).digest("hex"),
 };
 
-describe.skipIf(!candidate)("DocWen Machine Protocol v1 packaged exact-two client", () => {
+describe.skipIf(!candidate)("DocWen Machine Protocol v2 packaged exact-two client", () => {
   it("round-trips a resolved document and DOCX through the packaged machine protocol", async () => {
     const binaryPath = await resolveDocWenBinary(candidate!);
     const root = await mkdtemp(join(tmpdir(), "docwen-machine-client-"));
@@ -48,7 +60,7 @@ describe.skipIf(!candidate)("DocWen Machine Protocol v1 packaged exact-two clien
       await writeFile(planPath, PLAN_JSON);
       await mkdir(staging);
 
-      const result = await runDocWenMachineTask({
+      const result = await packagedClient!.runDocWenMachineTask({
         binaryPath,
         timeoutMs: 60_000,
         request: {
@@ -61,7 +73,7 @@ describe.skipIf(!candidate)("DocWen Machine Protocol v1 packaged exact-two clien
             staging_root: { kind: "local_path", path: staging },
             staging_policy: "require_empty",
           },
-          options: {},
+          options: { markdown_extensions: { input: SEMANTIC_EXTENSIONS } },
         },
       });
 
@@ -74,7 +86,7 @@ describe.skipIf(!candidate)("DocWen Machine Protocol v1 packaged exact-two clien
 
       const markdownStaging = join(root, "markdown-staging");
       await mkdir(markdownStaging);
-      const roundTrip = await runDocWenMachineTask({
+      const roundTrip = await packagedClient!.runDocWenMachineTask({
         binaryPath,
         timeoutMs: 60_000,
         request: {
@@ -95,7 +107,7 @@ describe.skipIf(!candidate)("DocWen Machine Protocol v1 packaged exact-two clien
             staging_root: { kind: "local_path", path: markdownStaging },
             staging_policy: "require_empty",
           },
-          options: {},
+          options: { markdown_extensions: { output: SEMANTIC_EXTENSIONS } },
         },
       });
 
@@ -131,7 +143,7 @@ describe.skipIf(!candidate)("DocWen Machine Protocol v1 packaged exact-two clien
     await writeFile(planPath, PLAN_JSON);
 
     try {
-      await runDocWenMachineTask({
+      await packagedClient!.runDocWenMachineTask({
         binaryPath,
         timeoutMs: 60_000,
         request: {
@@ -144,7 +156,7 @@ describe.skipIf(!candidate)("DocWen Machine Protocol v1 packaged exact-two clien
             staging_root: { kind: "local_path", path: staging },
             staging_policy: "require_empty",
           },
-          options: {},
+          options: { markdown_extensions: { input: SEMANTIC_EXTENSIONS } },
         },
       });
       expect.fail("expected task to be rejected");

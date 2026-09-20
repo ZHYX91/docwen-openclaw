@@ -1,19 +1,24 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
+import { isSupportedDocWenVersion } from "./fetch-docwen-release.mjs";
+import { loadCandidate } from "./release-candidate.mjs";
+import { verifyTarballBuffer, RELEASE_TARBALL_FILENAME } from "./release-package-lib.mjs";
+import { createReleaseWork, finishReleaseWork } from "./release-work.mjs";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
-const VERSION_PATTERN = /^0\.9\.(?:0|[1-9]\d*)$/u;
 const RAW_ACCEPTANCE_ENVIRONMENT = Object.freeze([
   "DOCWEN_MACHINE_D2_CANDIDATE",
   "DOCWEN_TEST_BINARY",
   "DOCWEN_TEST_SHA256",
   "DOCWEN_TEST_SIZE_BYTES",
   "DOCWEN_TEST_VERSION",
+  "DOCWEN_PLUGIN_CANDIDATE_DIR",
+  "DOCWEN_PLUGIN_D2_ROOT",
 ]);
 
 export function expectedBinaryName(platform = process.platform) {
@@ -33,7 +38,7 @@ export async function validateDocWenPackageCandidate(environment) {
   if (!Number.isSafeInteger(expectedSize) || expectedSize <= 0) {
     throw new Error("docwen_acceptance_size_invalid");
   }
-  if (!VERSION_PATTERN.test(productVersion)) throw new Error("docwen_acceptance_version_invalid");
+  if (!isSupportedDocWenVersion(productVersion)) throw new Error("docwen_acceptance_version_invalid");
 
   const sourceInfo = await lstat(binaryPath);
   if (sourceInfo.isSymbolicLink() || !sourceInfo.isFile())
@@ -59,25 +64,69 @@ export async function validateDocWenPackageCandidate(environment) {
 export async function runPackageAcceptance(environment = process.env) {
   const candidate = await validateDocWenPackageCandidate(environment);
   const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+  const pluginDirectory = requiredEnvironment(environment, "DOCWEN_PLUGIN_CANDIDATE_DIR");
+  if (!isAbsolute(pluginDirectory)) throw new Error("plugin_candidate_directory_must_be_absolute");
+  const plugin = loadCandidate(pluginDirectory);
+  const packageBytes = plugin.files.get(RELEASE_TARBALL_FILENAME);
+  const entries = verifyTarballBuffer(packageBytes).entries;
   const vitestEntrypoint = join(repositoryRoot, "node_modules", "vitest", "vitest.mjs");
   const childEnvironment = Object.fromEntries(
     Object.entries(environment).filter(
-      ([name]) => !RAW_ACCEPTANCE_ENVIRONMENT.some((blocked) => blocked.toLowerCase() === name.toLowerCase()),
+      ([name]) =>
+        !RAW_ACCEPTANCE_ENVIRONMENT.some((blocked) => blocked.toLowerCase() === name.toLowerCase()) &&
+        !/^(DOCWEN_(DATA_DIR|CONFIG_DIR|LOG_DIR|LOG_TO_TEMP)|TEMP|TMP|TMPDIR)$/iu.test(name),
     ),
   );
   childEnvironment.DOCWEN_MACHINE_D2_CANDIDATE = candidate.binaryPath;
-  const result = spawnSync(
-    process.execPath,
-    [vitestEntrypoint, "run", "src/docwen/machine-client.integration.test.ts"],
-    { cwd: repositoryRoot, env: childEnvironment, shell: false, stdio: "inherit" },
-  );
-  const postflight = await validateDocWenPackageCandidate(environment);
-  if (!sameIdentity(candidate, postflight)) throw new Error("docwen_acceptance_identity_changed");
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`docwen_acceptance_failed:${String(result.status)}`);
-  process.stdout.write(
-    `Packaged DocWen accepted: ${candidate.binaryPath} (${candidate.sizeBytes} bytes, ${candidate.sha256}, ${candidate.productVersion}).\n`,
-  );
+  const work = createReleaseWork(repositoryRoot);
+  let success = false;
+  try {
+    const pluginRoot = join(work.root, "plugin");
+    for (const [relative, bytes] of entries) {
+      const target = join(pluginRoot, ...relative.split("/"));
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, bytes, { flag: "wx" });
+    }
+    const temporary = join(work.root, "temp");
+    mkdirSync(temporary);
+    childEnvironment.TEMP = temporary;
+    childEnvironment.TMP = temporary;
+    childEnvironment.TMPDIR = temporary;
+    childEnvironment.DOCWEN_PLUGIN_D2_ROOT = pluginRoot;
+    childEnvironment.DOCWEN_DATA_DIR = join(work.root, "profile");
+    delete childEnvironment.DOCWEN_CONFIG_DIR;
+    delete childEnvironment.DOCWEN_LOG_DIR;
+    delete childEnvironment.DOCWEN_LOG_TO_TEMP;
+    const result = spawnSync(
+      process.execPath,
+      [vitestEntrypoint, "run", "src/docwen/machine-client.integration.test.ts"],
+      { cwd: repositoryRoot, env: childEnvironment, shell: false, stdio: "inherit", windowsHide: true },
+    );
+    const postflight = await validateDocWenPackageCandidate(environment);
+    if (!sameIdentity(candidate, postflight)) throw new Error("docwen_acceptance_identity_changed");
+    if (result.error) throw result.error;
+    if (result.status !== 0) throw new Error(`docwen_acceptance_failed:${String(result.status)}`);
+    const pluginAfter = loadCandidate(pluginDirectory);
+    if (
+      !pluginAfter.files.get(RELEASE_TARBALL_FILENAME).equals(packageBytes) ||
+      JSON.stringify(pluginAfter.record) !== JSON.stringify(plugin.record)
+    )
+      throw new Error("plugin_acceptance_identity_changed");
+    for (const [relative, expected] of entries) {
+      if (
+        (await sha256File(join(pluginRoot, ...relative.split("/")))) !==
+        createHash("sha256").update(expected).digest("hex")
+      ) {
+        throw new Error("plugin_extracted_candidate_changed");
+      }
+    }
+    process.stdout.write(
+      `Packaged DocWen accepted: ${candidate.binaryPath} (${candidate.sizeBytes} bytes, ${candidate.sha256}, ${candidate.productVersion}); plugin ${plugin.record.package.sha256}.\n`,
+    );
+    success = true;
+  } finally {
+    finishReleaseWork(work, success);
+  }
 }
 
 function requiredEnvironment(environment, name) {

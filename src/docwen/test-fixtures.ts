@@ -1,4 +1,5 @@
-// GENERATED from DocWen Machine Protocol v1 conformance fixtures; consumer-specific input IDs are normalized here.
+// Consumer-authored rich numbering examples; normalized input IDs and source ranges are test data.
+// Normative, revision-bound wire examples are in contracts/docwen; this file is not generated.
 export const EXACT_TWO_MARKDOWN_TO_DOCX_CAPABILITY = {
   capability_id: "convert.markdown.to_docx",
   operation: "convert",
@@ -41,15 +42,17 @@ export const EXACT_TWO_MARKDOWN_TO_DOCX_CAPABILITY = {
   ],
 };
 
+// Ordinary paragraphs separate captioned objects so adjacent captions have one owner.
+// Source ranges and both envelope hashes are bound to this exact authored Markdown.
 export const NEUTRAL_DOCUMENT = {
   $schema: "urn:docwen:schema:resolved-document:v1",
   schema: "docwen.resolved_document.v1",
-  input_id: "docwen-neutral-1d28a20836a07c7818a289b51a7ef4ca",
-  source_sha256: "1d28a20836a07c7818a289b51a7ef4ca2b1dc8d731175e02b831750dc27ab962",
-  plan_sha256: "2aecfd6cfa60bf788eecae7fbb7494642fff79af5988969ad34926f0e2425054",
+  input_id: "docwen-neutral-135b03bcaff1389faf15d4c84215156e",
+  source_sha256: "135b03bcaff1389faf15d4c84215156e6cf6647a59800b5c6dc07eddbba4e91b",
+  plan_sha256: "b8cf0e0285d4d9624cbfeaacacf6f5afdfca4d3d82604dfadf95b08bc0f924ed",
   document: {
     authored_markdown:
-      "# Architecture ^h-7f3a\n\nFigure: System overview ^system-overview\n\n![[system.png]]\n\nTable: Results ^results-main\n\n| Metric | Value |\n|---|---|\n| Score | 95 |\n\nEquation: ^energy-main\n\n$$\nE = mc^2\n$$\n\nCode: Entry point ^entry-main\n\n```rust\nfn main() {}\n```\n\nStable: @[[#^h-7f3a]] and @[[#^system-overview|System overview]].\nOrdinary: [[#^system-overview]] and ![[Guide#^h-7f3a]].\nCitation: @cite-one.\n",
+      "# Architecture ^h-7f3a\n\nFigure: System overview ^system-overview\n\n![[system.png]]\n\nObject description.\n\nTable: Results ^results-main\n\n| Metric | Value |\n|---|---|\n| Score | 95 |\n\nObject description.\n\nEquation: ^energy-main\n\n$$\nE = mc^2\n$$\n\nObject description.\n\nCode: Entry point ^entry-main\n\n```rust\nfn main() {}\n```\n\nStable: @[[#^h-7f3a]] and @[[#^system-overview|System overview]].\nOrdinary: [[#^system-overview]] and ![[Guide#^h-7f3a]].\nCitation: @cite-one.\n",
     targets: [
       {
         source_start: 0,
@@ -70,8 +73,8 @@ export const NEUTRAL_DOCUMENT = {
         authored_text: "System overview",
       },
       {
-        source_start: 83,
-        source_end: 111,
+        source_start: 104,
+        source_end: 132,
         source_slice_sha256: "82c070f6467923aa51bc75b9fa5aed5eb7f99232b19b099657a9aa2f9737fcc1",
         kind: "table",
         target_id: "results-main",
@@ -79,8 +82,8 @@ export const NEUTRAL_DOCUMENT = {
         authored_text: "Results",
       },
       {
-        source_start: 158,
-        source_end: 180,
+        source_start: 200,
+        source_end: 222,
         source_slice_sha256: "52484aa20fbf4788aebc2f7343dd7b4b375711b4b720210b0e6ca802cc07297a",
         kind: "equation",
         target_id: "energy-main",
@@ -88,8 +91,8 @@ export const NEUTRAL_DOCUMENT = {
         authored_text: "",
       },
       {
-        source_start: 198,
-        source_end: 227,
+        source_start: 261,
+        source_end: 290,
         source_slice_sha256: "2a756b8a621ec190b9eea85a367a410eb5cd0654a301c31d50f999490a87694a",
         kind: "code_block",
         target_id: "entry-main",
@@ -99,8 +102,8 @@ export const NEUTRAL_DOCUMENT = {
     ],
     references: [
       {
-        source_start: 263,
-        source_end: 276,
+        source_start: 326,
+        source_end: 339,
         source_slice_sha256: "850ccceb2327d91136ce996a3577d080a287988504857907e32f679a3819959c",
         authored_token: "@[[#^h-7f3a]]",
         target_source_start: 0,
@@ -111,8 +114,8 @@ export const NEUTRAL_DOCUMENT = {
         alias: null,
       },
       {
-        source_start: 281,
-        source_end: 319,
+        source_start: 344,
+        source_end: 382,
         source_slice_sha256: "391f374d10a10a9deb0bf5306378e6a55e271355a3a9b8128394c1bd947976ee",
         authored_token: "@[[#^system-overview|System overview]]",
         target_source_start: 24,
@@ -135,8 +138,8 @@ export const NEUTRAL_DOCUMENT = {
     ],
     citations: [
       {
-        source_start: 387,
-        source_end: 396,
+        source_start: 450,
+        source_end: 459,
         source_slice_sha256: "5f6357be6410398a73822925e446d175effed3cdab0d5d5ad38e28ad262eae28",
         authored_token: "@cite-one",
         form: "narrative",
@@ -178,9 +181,9 @@ export const NEUTRAL_DOCUMENT = {
 export const NUMBERING_PLAN = {
   $schema: "urn:docwen:schema:numbering-export-plan:v1",
   schema: "docwen.numbering_export_plan.v1",
-  input_id: "docwen-neutral-1d28a20836a07c7818a289b51a7ef4ca",
-  source_sha256: "1d28a20836a07c7818a289b51a7ef4ca2b1dc8d731175e02b831750dc27ab962",
-  plan_sha256: "2aecfd6cfa60bf788eecae7fbb7494642fff79af5988969ad34926f0e2425054",
+  input_id: "docwen-neutral-135b03bcaff1389faf15d4c84215156e",
+  source_sha256: "135b03bcaff1389faf15d4c84215156e6cf6647a59800b5c6dc07eddbba4e91b",
+  plan_sha256: "b8cf0e0285d4d9624cbfeaacacf6f5afdfca4d3d82604dfadf95b08bc0f924ed",
   plan: {
     heading_definitions: [
       {
@@ -270,8 +273,8 @@ export const NUMBERING_PLAN = {
           start_value: null,
           type: "simple_seq",
         },
-        source_end: 111,
-        source_start: 83,
+        source_end: 132,
+        source_start: 104,
         target_id: "results-main",
       },
       {
@@ -294,8 +297,8 @@ export const NUMBERING_PLAN = {
           start_value: null,
           type: "simple_seq",
         },
-        source_end: 180,
-        source_start: 158,
+        source_end: 222,
+        source_start: 200,
         target_id: "energy-main",
       },
       {
@@ -318,8 +321,8 @@ export const NUMBERING_PLAN = {
           start_value: null,
           type: "simple_seq",
         },
-        source_end: 227,
-        source_start: 198,
+        source_end: 290,
+        source_start: 261,
         target_id: "entry-main",
       },
     ],

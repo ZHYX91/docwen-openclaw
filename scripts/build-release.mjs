@@ -1,6 +1,5 @@
 import console from "node:console";
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import process from "node:process";
 import { URL, fileURLToPath } from "node:url";
@@ -9,12 +8,12 @@ import {
   RELEASE_TARBALL_FILENAME,
   SHA256SUMS_FILENAME,
   assertExternalOutputDirectory,
-  assertIdenticalReleaseTarballs,
   assertReleaseToolchain,
-  buildIsolatedReleasePass,
+  buildReleaseCandidate,
   formatSha256Sums,
   verifyTarballBuffer,
 } from "./release-package-lib.mjs";
+import { createReleaseWork, finishReleaseWork } from "./release-work.mjs";
 
 function main() {
   if (process.argv.length !== 3)
@@ -39,23 +38,20 @@ function main() {
     throw new Error("release_output_asset_already_exists");
   }
 
-  const passRoots = [];
-  let first;
-  let second;
+  const work = createReleaseWork(repoRoot);
+  let candidate;
   try {
-    passRoots.push(mkdtempSync(join(tmpdir(), "openclaw-release-a-")));
-    passRoots.push(mkdtempSync(join(tmpdir(), "openclaw-release-b-")));
-    first = buildIsolatedReleasePass(repoRoot, passRoots[0], npmCli);
-    second = buildIsolatedReleasePass(repoRoot, passRoots[1], npmCli);
-    assertIdenticalReleaseTarballs(first.tarball, second.tarball);
-  } finally {
-    for (const root of passRoots) rmSync(root, { recursive: true, force: true });
+    candidate = buildReleaseCandidate(repoRoot, work.root, npmCli);
+  } catch (error) {
+    finishReleaseWork(work, false);
+    throw error;
   }
+  finishReleaseWork(work, true);
 
-  verifyTarballBuffer(first.tarball);
-  writeFileSync(tarballOutput, first.tarball, { flag: "wx", mode: 0o644 });
+  verifyTarballBuffer(candidate.tarball);
+  writeFileSync(tarballOutput, candidate.tarball, { flag: "wx", mode: 0o644 });
   try {
-    writeFileSync(checksumOutput, formatSha256Sums(first.sha256), {
+    writeFileSync(checksumOutput, formatSha256Sums(candidate.sha256), {
       encoding: "utf8",
       flag: "wx",
       mode: 0o644,
