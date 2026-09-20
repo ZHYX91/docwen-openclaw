@@ -25,7 +25,12 @@ const { spawnMock, terminateProcessTreeMock, serverState } = vi.hoisted(() => ({
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 vi.mock("../process/runner.js", () => ({ terminateProcessTree: terminateProcessTreeMock }));
 
-import { runDocWenMachineQuery, runDocWenMachineTask, validateArtifactBundle } from "./machine-client.js";
+import {
+  runDocWenMachineQuery,
+  runDocWenMachineQueries,
+  runDocWenMachineTask,
+  validateArtifactBundle,
+} from "./machine-client.js";
 
 const temporaryRoots: string[] = [];
 
@@ -106,6 +111,7 @@ class FakeChild extends EventEmitter {
       return;
     }
     if (message.method === "health/check") {
+      if (serverState.behavior === "hang_health") return;
       this.reply(id, { all_ok: true, checks: [] });
       return;
     }
@@ -313,6 +319,91 @@ describe("DocWen Machine Protocol client", () => {
       ["serve", "--stdio"],
       expect.objectContaining({ shell: false, windowsHide: true }),
     );
+  });
+
+  it("runs related reads in one initialized process and closes it", async () => {
+    const response = await runDocWenMachineQueries({
+      binaryPath: "C:\\DocWen\\DocWenCLI.exe",
+      queries: [
+        { method: "health/check", params: {} },
+        { method: "health/check", params: {} },
+      ],
+      timeoutMs: 1_000,
+    });
+    expect(response.results).toEqual([
+      { all_ok: true, checks: [] },
+      { all_ok: true, checks: [] },
+    ]);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(serverState.requests.map((request) => request.method)).toEqual([
+      "initialize",
+      "health/check",
+      "health/check",
+    ]);
+    expect((spawnMock.mock.results[0]!.value as FakeChild).exitCode).toBe(0);
+  });
+
+  it("prepares and validates a task in the same process without caching the next operation", async () => {
+    const invocation = await taskInvocation();
+    const result = await runDocWenMachineTask({
+      ...invocation.options,
+      request: async (query) => {
+        expect(await query("health/check", {})).toEqual({ all_ok: true, checks: [] });
+        return invocation.options.request;
+      },
+    });
+    expect(result.bundle.artifacts[0]!.sha256).toMatch(/^[0-9a-f]{64}$/u);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(serverState.requests.map((request) => request.method)).toEqual([
+      "initialize",
+      "health/check",
+      "task/plan",
+      "task/execute",
+    ]);
+    await runDocWenMachineQuery({
+      binaryPath: invocation.options.binaryPath,
+      method: "health/check",
+      params: {},
+      timeoutMs: 1_000,
+    });
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["cancel", "reject"])("does not plan a task when preparation ends with %s", async (reason) => {
+    const controller = new AbortController();
+    const invocation = await taskInvocation(1_000, controller.signal);
+    const failure = new Error("preparation rejected");
+    const operation = runDocWenMachineTask({
+      ...invocation.options,
+      request: async (query) => {
+        await query("health/check", {});
+        if (reason === "reject") throw failure;
+        controller.abort();
+        return invocation.options.request;
+      },
+    });
+    if (reason === "reject") await expect(operation).rejects.toBe(failure);
+    else await expect(operation).rejects.toMatchObject({ code: "docwen_machine_cancelled" });
+    expect(serverState.executeSeen).toBe(false);
+    expect(serverState.requests.map((request) => request.method)).toEqual(["initialize", "health/check"]);
+    expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains the read deadline inside a longer task deadline", async () => {
+    serverState.behavior = "hang_health";
+    const invocation = await taskInvocation(5_000);
+    await expect(
+      runDocWenMachineTask({
+        ...invocation.options,
+        readTimeoutMs: 20,
+        request: async (query) => {
+          await query("health/check", {});
+          return invocation.options.request;
+        },
+      }),
+    ).rejects.toMatchObject({ code: "docwen_machine_timeout", details: { timeoutMs: 20 } });
+    expect(serverState.executeSeen).toBe(false);
+    expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
   });
 
   it.each([

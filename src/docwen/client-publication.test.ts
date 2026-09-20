@@ -20,7 +20,28 @@ vi.mock("./path.js", () => ({ resolveDocWenBinary: async () => process.execPath 
 vi.mock("./machine-client.js", async (original) => ({
   ...(await original<typeof MachineClientModule>()),
   runDocWenMachineQuery: mocks.query,
-  runDocWenMachineTask: mocks.task,
+  runDocWenMachineQueries: async (
+    options: Parameters<typeof MachineClientModule.runDocWenMachineQueries>[0],
+  ) => {
+    const results = [];
+    let initialize = {};
+    for (const query of options.queries) {
+      const response = await mocks.query({ ...options, ...query });
+      initialize = response.initialize;
+      results.push(response.result);
+    }
+    return { initialize, results };
+  },
+  runDocWenMachineTask: async (options: Parameters<typeof MachineClientModule.runDocWenMachineTask>[0]) =>
+    mocks.task({
+      ...options,
+      request:
+        typeof options.request === "function"
+          ? await options.request(
+              async (method, params) => (await mocks.query({ ...options, method, params })).result,
+            )
+          : options.request,
+    }),
 }));
 vi.mock("./output-transaction.js", async (original) => {
   const actual = await original<typeof OutputTransactionModule>();

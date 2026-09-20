@@ -159,6 +159,10 @@ class MessageQueue {
     if (this.failure) throw this.failure;
     return this.messages.splice(0);
   }
+
+  throwIfFailed(): void {
+    if (this.failure) throw this.failure;
+  }
 }
 
 class MachineSession {
@@ -257,6 +261,20 @@ class MachineSession {
     return result;
   }
 
+  async query(method: string, params: JsonObject, timeoutMs: number): Promise<JsonObject> {
+    const timer = setTimeout(() => {
+      this.fail(
+        new DocWenMachineError("docwen_machine_timeout", "DocWen Machine query timed out.", { timeoutMs }),
+      );
+      void this.terminate();
+    }, timeoutMs);
+    try {
+      return await this.rpc(method, params);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async rpc(method: string, params: JsonObject): Promise<JsonObject> {
     const id = ++this.nextRequestId;
     this.send({ jsonrpc: "2.0", id, method, params });
@@ -329,10 +347,13 @@ class MachineSession {
   }
 
   private send(message: JsonObject): void {
+    this.queue.throwIfFailed();
     if (this.child.stdin.destroyed) throw protocolError("DocWen stdin is closed");
     this.child.stdin.write(encodeMachineFrame(message));
   }
 }
+
+export type MachineQuery = (method: string, params: JsonObject) => Promise<JsonObject>;
 
 export async function runDocWenMachineQuery(options: {
   binaryPath: string;
@@ -342,22 +363,45 @@ export async function runDocWenMachineQuery(options: {
   signal?: AbortSignal;
   locale?: string;
 }): Promise<{ initialize: JsonObject; result: JsonObject }> {
-  return withSession(options, async (session) => ({
-    initialize: await session.initialize(),
-    result: await session.rpc(options.method, options.params),
-  }));
+  const { initialize, results } = await runDocWenMachineQueries({
+    ...options,
+    queries: [{ method: options.method, params: options.params }],
+  });
+  return { initialize, result: results[0]! };
+}
+
+export async function runDocWenMachineQueries(options: {
+  binaryPath: string;
+  queries: readonly { method: string; params: JsonObject }[];
+  timeoutMs: number;
+  signal?: AbortSignal;
+  locale?: string;
+}): Promise<{ initialize: JsonObject; results: JsonObject[] }> {
+  return withSession(options, async (session) => {
+    const initialize = await session.initialize();
+    const results: JsonObject[] = [];
+    for (const query of options.queries) results.push(await session.rpc(query.method, query.params));
+    return { initialize, results };
+  });
 }
 
 export async function runDocWenMachineTask(options: {
   binaryPath: string;
-  request: MachineTaskRequest;
+  request: MachineTaskRequest | ((query: MachineQuery) => Promise<MachineTaskRequest>);
   timeoutMs: number;
+  readTimeoutMs?: number;
   signal?: AbortSignal;
   locale?: string;
 }): Promise<MachineTaskCompleted> {
   return withSession(options, async (session, setTaskId) => {
     await session.initialize();
-    const plan = await session.rpc("task/plan", options.request);
+    const request =
+      typeof options.request === "function"
+        ? await options.request((method, params) =>
+            session.query(method, params, options.readTimeoutMs ?? 30_000),
+          )
+        : options.request;
+    const plan = await session.rpc("task/plan", request);
     const planId = requiredString(plan.plan_id, "task/plan.plan_id");
     const acceptance = await session.rpc("task/execute", { plan_id: planId });
     const taskId = requiredString(acceptance.task_id, "task/execute.task_id");
@@ -389,7 +433,7 @@ export async function runDocWenMachineTask(options: {
       return {
         taskId,
         plan,
-        bundle: await validateArtifactBundle(params.bundle, options.request.output.staging_root.path, taskId),
+        bundle: await validateArtifactBundle(params.bundle, request.output.staging_root.path, taskId),
         diagnostics: objectArray(params.diagnostics, "terminal.diagnostics"),
         metrics: requiredObject(params.metrics, "terminal.metrics"),
         progress,

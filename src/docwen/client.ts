@@ -13,6 +13,7 @@ import {
   type MachineInputRole,
   type MachineTaskCompleted,
   runDocWenMachineQuery,
+  runDocWenMachineQueries,
   runDocWenMachineTask,
   type ValidatedArtifactBundle,
 } from "./machine-client.js";
@@ -67,6 +68,16 @@ type TaskExecution = {
   completed: MachineTaskCompleted;
   temporaryRoot: string;
 };
+
+type CapabilitySelection =
+  | string
+  | ((
+      capabilities: MachineCapability[],
+      inputs: MachineInputHandle[],
+    ) => {
+      capability: MachineCapability;
+      options: JsonObject;
+    });
 
 export async function executeDocWenTool(
   toolName: string,
@@ -184,16 +195,25 @@ async function info(
   config: DocWenPluginConfig,
   signal?: AbortSignal,
 ): Promise<JsonObject> {
-  const [health, capabilities] = await Promise.all([
-    query(binaryPath, "health/check", {}, config, signal),
-    query(binaryPath, "capability/list", {}, config, signal),
-  ]);
+  const {
+    initialize,
+    results: [health, capabilities],
+  } = await runDocWenMachineQueries({
+    binaryPath,
+    queries: [
+      { method: "health/check", params: {} },
+      { method: "capability/list", params: {} },
+    ],
+    timeoutMs: config.readTimeoutMs ?? 30_000,
+    signal,
+    locale: config.language,
+  });
   return {
-    machine_protocol: health.initialize.protocol,
-    artifact_bundle_schema: health.initialize.artifact_bundle_schema,
-    server: health.initialize.server,
-    health: health.result,
-    capabilities: capabilities.result.capabilities,
+    machine_protocol: initialize.protocol,
+    artifact_bundle_schema: initialize.artifact_bundle_schema,
+    server: initialize.server,
+    health: health!,
+    capabilities: capabilities!.capabilities,
   };
 }
 
@@ -295,7 +315,6 @@ async function validateMarkdown(
     options,
     config,
     signal,
-    true,
   );
   const cleanup = newPublication();
   try {
@@ -343,26 +362,24 @@ async function convert(
   signal?: AbortSignal,
 ): Promise<JsonObject> {
   const inputs = requiredInputArray(params, "inputs");
-  const preparedInputs = await buildInputHandles(inputs);
   const outputMediaType = targetMediaType(requiredString(params, "to"));
-  const capabilities = await discoverCapabilities(binaryPath, config, signal);
-  const capability = selectConversionCapability(
-    capabilities,
-    preparedInputs,
-    outputMediaType,
-    optionalString(params, "optimization"),
-  );
-  const options = buildConversionOptions(capability, params);
+  const optimizationId = optionalString(params, "optimization");
   return persistentTask(
     binaryPath,
-    capability.capability_id,
+    (capabilities, preparedInputs) => {
+      const capability = selectConversionCapability(
+        capabilities,
+        preparedInputs,
+        outputMediaType,
+        optimizationId,
+      );
+      return { capability, options: buildConversionOptions(capability, params) };
+    },
     inputs,
-    options,
+    {},
     params,
     config,
     signal,
-    preparedInputs,
-    capability,
   );
 }
 
@@ -538,7 +555,6 @@ async function numberMarkdown(
     options,
     config,
     signal,
-    true,
     preparedInputs,
   );
   try {
@@ -577,29 +593,18 @@ async function numberMarkdown(
 
 async function persistentTask(
   binaryPath: string,
-  capabilityId: string,
+  selection: CapabilitySelection,
   inputs: InputSpec[],
   options: JsonObject,
   params: Params,
   config: DocWenPluginConfig,
   signal?: AbortSignal,
   preparedInputs?: MachineInputHandle[],
-  preparedCapability?: MachineCapability,
 ): Promise<JsonObject> {
   const outputDir = requiredAbsolutePath(params, "outputDir");
   const overwrite = optionalBoolean(params, "overwrite") ?? false;
   const initialDestination = await preflightOutputDirectory(outputDir, overwrite);
-  const execution = await executeTask(
-    binaryPath,
-    capabilityId,
-    inputs,
-    options,
-    config,
-    signal,
-    true,
-    preparedInputs,
-    preparedCapability,
-  );
+  const execution = await executeTask(binaryPath, selection, inputs, options, config, signal, preparedInputs);
   try {
     const committed = await atomicCommitBundle(
       execution.completed.bundle,
@@ -626,36 +631,14 @@ async function persistentTask(
 
 async function executeTask(
   binaryPath: string,
-  capabilityId: string,
+  selection: CapabilitySelection,
   inputSpecs: InputSpec[],
   options: JsonObject,
   config: DocWenPluginConfig,
   signal: AbortSignal | undefined,
-  requireAvailable: boolean,
   preparedInputs?: MachineInputHandle[],
-  preparedCapability?: MachineCapability,
 ): Promise<TaskExecution> {
   const inputs = preparedInputs ?? (await buildInputHandles(inputSpecs));
-  if (requireAvailable) {
-    const capability =
-      preparedCapability?.capability_id === capabilityId
-        ? preparedCapability
-        : (await discoverCapabilities(binaryPath, config, signal)).find(
-            (item) => item.capability_id === capabilityId,
-          );
-    if (!capability || capability.availability === "unavailable") {
-      throw new DocWenMachineError(
-        "docwen_capability_unavailable",
-        `DocWen capability is unavailable: ${capabilityId}`,
-      );
-    }
-    if (!capabilityAcceptsInputs(capability, inputs)) {
-      throw new DocWenMachineError(
-        "docwen_capability_input_unsupported",
-        `DocWen capability does not accept the supplied typed inputs: ${capabilityId}`,
-      );
-    }
-  }
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), "docwen-openclaw-task-"));
   const stagingRoot = path.join(temporaryRoot, "output");
   try {
@@ -663,13 +646,40 @@ async function executeTask(
     const completed = await runDocWenMachineTask({
       binaryPath,
       timeoutMs: config.writeTimeoutMs ?? 600_000,
+      readTimeoutMs: config.readTimeoutMs ?? 30_000,
       signal,
       locale: config.language,
-      request: {
-        capability_id: capabilityId,
-        inputs,
-        output: { staging_root: { kind: "local_path", path: stagingRoot }, staging_policy: "require_empty" },
-        options,
+      request: async (query) => {
+        const result = await query("capability/list", {});
+        const capabilities = objectArray(result.capabilities, "capability/list.capabilities").map(
+          parseCapability,
+        );
+        const selected =
+          typeof selection === "function"
+            ? selection(capabilities, inputs)
+            : { capability: capabilities.find((item) => item.capability_id === selection), options };
+        const capability = selected.capability;
+        if (!capability || capability.availability === "unavailable") {
+          throw new DocWenMachineError(
+            "docwen_capability_unavailable",
+            `DocWen capability is unavailable: ${selection}`,
+          );
+        }
+        if (!capabilityAcceptsInputs(capability, inputs)) {
+          throw new DocWenMachineError(
+            "docwen_capability_input_unsupported",
+            `DocWen capability does not accept the supplied typed inputs: ${capability.capability_id}`,
+          );
+        }
+        return {
+          capability_id: capability.capability_id,
+          inputs,
+          output: {
+            staging_root: { kind: "local_path", path: stagingRoot },
+            staging_policy: "require_empty",
+          },
+          options: selected.options,
+        };
       },
     });
     return { completed, temporaryRoot };
@@ -695,15 +705,6 @@ async function query(
     signal,
     locale: config.language,
   });
-}
-
-async function discoverCapabilities(
-  binaryPath: string,
-  config: DocWenPluginConfig,
-  signal?: AbortSignal,
-): Promise<MachineCapability[]> {
-  const result = (await query(binaryPath, "capability/list", {}, config, signal)).result;
-  return objectArray(result.capabilities, "capability/list.capabilities").map(parseCapability);
 }
 
 function parseCapability(value: JsonObject): MachineCapability {
