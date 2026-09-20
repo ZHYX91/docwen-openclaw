@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { describe, expect, it, vi } from "vitest";
-import { ensureTag, inspectRelease, publishRelease, verifyTag } from "./publish-release.mjs";
+import { ensureTag, inspectRelease, publishRelease, readRelease, verifyTag } from "./publish-release.mjs";
 import { githubApi } from "./release-github.mjs";
 
 const version = "3.0.0";
@@ -28,6 +28,8 @@ function harness(options = {}) {
     read: vi.fn(async (endpoint) => {
       if (endpoint === `git/ref/tags/${version}`)
         return { object: { type: "commit", sha: options.tagCommit ?? commit } };
+      if (endpoint.startsWith("releases?")) return release ? [structuredClone(release)] : [];
+      if (options.hideDraftByTag && endpoint === `releases/tags/${version}` && release?.draft) return null;
       return structuredClone(release);
     }),
     write: vi.fn(async (method, endpoint, body) => {
@@ -61,6 +63,30 @@ function harness(options = {}) {
 const draft = (assets = []) => ({ id: 17, tag_name: version, draft: true, prerelease: false, assets });
 
 describe("recoverable release publication", () => {
+  it("discovers a draft omitted by the tag endpoint without creating a duplicate", async () => {
+    const h = harness({ release: draft(), hideDraftByTag: true });
+    await publishRelease(h.api, { version, commit, files });
+    expect(h.writes.map(({ method }) => method)).toEqual(["PATCH"]);
+  });
+
+  it("reads a newly created draft through its ID when tag lookup omits it", async () => {
+    const h = harness({ hideDraftByTag: true, lostResponses: true });
+    await publishRelease(h.api, { version, commit, files });
+    expect(h.writes.map(({ method }) => method)).toEqual(["POST", "PATCH"]);
+  });
+
+  it("finds drafts beyond the first page and rejects duplicate tag matches", async () => {
+    const read = vi.fn(async (endpoint) => {
+      if (endpoint === `releases/tags/${version}`) return null;
+      if (endpoint === "releases?per_page=100&page=1")
+        return Array.from({ length: 100 }, (_, id) => ({ id, tag_name: "other" }));
+      if (endpoint === "releases?per_page=100&page=2") return [draft()];
+      return draft();
+    });
+    await expect(readRelease({ read }, version)).resolves.toEqual(draft());
+    const duplicate = { read: async (endpoint) => (endpoint.includes("tags/") ? null : [draft(), draft()]) };
+    await expect(readRelease(duplicate, version)).rejects.toThrow("publication_release_ambiguous");
+  });
   it("creates a draft, uploads each accepted byte sequence once and then publishes", async () => {
     const h = harness();
     await expect(publishRelease(h.api, { version, commit, files }, async () => {})).resolves.toMatchObject({
