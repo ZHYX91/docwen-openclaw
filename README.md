@@ -2,7 +2,7 @@
 
 Typed OpenClaw tools for DocWen Machine Protocol v2 and verified `docwen.artifact_bundle.v3` output graphs.
 
-> Version 2.0.0 is published as an [immutable GitHub Release](https://github.com/ZHYX91/docwen-openclaw/releases/tag/2.0.0).
+> Requires DocWen 0.12.0 or later with Machine Protocol v2 and Artifact Bundle v3. Download the plugin from [GitHub Releases](https://github.com/ZHYX91/docwen-openclaw/releases).
 
 ## Boundary
 
@@ -76,7 +76,7 @@ npm run release:build -- /absolute/path/to/new-output-directory
 
 The local command creates exactly these release-build outputs:
 
-- `openclaw-docwen-2.0.0.tgz`
+- `openclaw-docwen-3.0.0.tgz`
 - `SHA256SUMS`
 
 The workflow adds `CANDIDATE.json`, which binds the version, tarball size and SHA-256 to its original repository, commit, full tree, ref, run and attempt. The tarball and this record receive provenance at build time. The immutable GitHub Release also publishes `DOCWEN-CORE.json`, pinning one supported numeric DocWen tag and the exact Linux and Windows asset identities, sizes and SHA-256 digests used by both packaged acceptance jobs. Published `SHA256SUMS` covers the other three assets.
@@ -97,7 +97,7 @@ Publication creates a draft first and resumes matching drafts by uploading only 
 After obtaining that exact tarball, install it with OpenClaw:
 
 ```bash
-openclaw plugins install ./openclaw-docwen-2.0.0.tgz
+openclaw plugins install ./openclaw-docwen-3.0.0.tgz
 ```
 
 ## Package structure
