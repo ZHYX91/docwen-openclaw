@@ -17,6 +17,7 @@ import {
   type ValidatedArtifactBundle,
 } from "./machine-client.js";
 import { resolveDocWenBinary } from "./path.js";
+import { diagnosticSummary } from "./diagnostics.js";
 import {
   atomicCommitBundle,
   atomicReplaceFile,
@@ -76,12 +77,31 @@ export async function executeDocWenTool(
   try {
     return await executeTool(toolName, params, config, signal);
   } catch (error) {
-    if (!WRITE_TOOL_NAMES.some((name) => name === toolName)) throw error;
-    const publication = error instanceof OutputPublicationError ? error.publication : newPublication();
-    const failure = publicationFailure(error, publication);
+    const writes = WRITE_TOOL_NAMES.some((name) => name === toolName);
+    const publication = writes
+      ? error instanceof OutputPublicationError
+        ? error.publication
+        : newPublication()
+      : undefined;
+    const failure = publication
+      ? publicationFailure(error, publication)
+      : error instanceof DocWenMachineError
+        ? error
+        : new DocWenMachineError(
+            "docwen_operation_failed",
+            error instanceof Error ? error.message : String(error),
+          );
     return {
-      ...publicationResult(publication),
+      ...(publication ? publicationResult(publication) : { status: "failed" }),
       error: { code: failure.code, message: failure.message },
+      diagnostic_summary: diagnosticSummary({
+        error: error ?? new Error("Unknown DocWen failure."),
+        publication,
+        warnings: error instanceof OutputPublicationError ? error.publication.warnings : undefined,
+      }),
+      ...(!writes && error instanceof OutputPublicationError && error.publication.warnings.length > 0
+        ? { warnings: error.publication.warnings }
+        : {}),
     };
   }
 }
@@ -298,6 +318,10 @@ async function validateMarkdown(
       report: jsonValue(report),
       diagnostics: execution.completed.diagnostics,
       metrics: execution.completed.metrics,
+      diagnostic_summary: diagnosticSummary({
+        diagnosticCount: execution.completed.diagnostics.length,
+        warnings: cleanup.warnings,
+      }),
       ...(cleanup.warnings.length > 0 ? { warnings: cleanup.warnings } : {}),
     };
   } catch (error) {
@@ -1061,6 +1085,11 @@ function taskResult(
     bundle: serializableBundle(completed.bundle),
     diagnostics: completed.diagnostics,
     metrics: completed.metrics,
+    diagnostic_summary: diagnosticSummary({
+      publication,
+      outputCount: artifactPaths.length,
+      diagnosticCount: completed.diagnostics.length,
+    }),
   };
 }
 

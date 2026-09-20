@@ -104,6 +104,33 @@ async function input() {
 }
 
 describe("write tool publication results", () => {
+  it("returns a shareable read-failure summary without inventing a write or invoking a task", async () => {
+    const secret = "private-path-and-token";
+    mocks.query.mockRejectedValue(
+      new DocWenMachineError(`docwen_machine_remote:${secret}`, secret, {
+        category: "dependency",
+        retryable: true,
+        details: { path: secret, command: secret },
+      }),
+    );
+    const result = await executeDocWenTool("docwen_info", {}, {});
+    expect(result).toMatchObject({
+      status: "failed",
+      diagnostic_summary: {
+        publication_state: "not_applicable",
+        error_category: "dependency",
+        error_code: "remote_error",
+        recovery_action: "check_dependencies",
+        reported_retryable: true,
+      },
+    });
+    expect(result).not.toHaveProperty("publication");
+    expect(JSON.stringify((result as { diagnostic_summary: unknown }).diagnostic_summary)).not.toContain(
+      secret,
+    );
+    expect(mocks.task).not.toHaveBeenCalled();
+  });
+
   it("returns a usable published result and a cleanup warning without a second write", async () => {
     const file = await input();
     mocks.hooks.cleanupBackup = async () => {
@@ -122,9 +149,27 @@ describe("write tool publication results", () => {
         warnings: [{ code: "backup_cleanup_failed" }],
       },
       output: { preferred_artifact: file },
+      diagnostic_summary: {
+        outcome: "warning",
+        publication_state: "published",
+        retry: "do_not_retry",
+        recovery_action: "review_cleanup_keep_outputs",
+        output_count: 1,
+      },
     });
     expect(await readFile(file, "utf8")).toBe("# 1. Result\n");
     expect(mocks.task).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify((result as { diagnostic_summary: unknown }).diagnostic_summary)).not.toContain(
+      file,
+    );
+  });
+
+  it("does not report a success when a read rejects without an Error object", async () => {
+    mocks.query.mockRejectedValue(undefined);
+    expect(await executeDocWenTool("docwen_info", {}, {})).toMatchObject({
+      status: "failed",
+      diagnostic_summary: { outcome: "failed", error_category: "unknown" },
+    });
   });
 
   it("returns unconfirmed recovery paths without claiming an intervening file as its output", async () => {
@@ -140,6 +185,11 @@ describe("write tool publication results", () => {
     expect(result).toMatchObject({
       status: "unconfirmed",
       publication: { state: "unconfirmed", retry: "do_not_retry", recovery: { destination: file } },
+      diagnostic_summary: {
+        outcome: "unconfirmed",
+        recovery_action: "review_recovery_paths",
+        retry: "do_not_retry",
+      },
     });
     expect(result).not.toHaveProperty("output");
     expect(await readFile(file, "utf8")).toBe("intervening writer");
@@ -180,6 +230,7 @@ describe("write tool publication results", () => {
       status: "failed",
       publication: { state: "not_published", retry: "review_before_retry" },
       error: { code: "producer_failure" },
+      diagnostic_summary: { error_code: "unknown", publication_state: "not_published" },
     });
     expect(result).not.toHaveProperty("output");
     expect(await readFile(file, "utf8")).toBe("# Original\n");

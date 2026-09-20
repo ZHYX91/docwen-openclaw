@@ -43,6 +43,10 @@ Before calling a write tool:
 
 Read `status` and `publication.state` before reporting a write result. `published` results include valid output paths even when `status="warning"`; report `publication.warnings` without repeating the write. `unconfirmed` means publication or restoration could not be confirmed: preserve and report `publication.recovery`, and do not retry or delete its paths automatically. `not_published` means no new output was committed; review the reported failure before another attempt. Always honor `publication.retry`; cleanup failures never authorize another write.
 
+When the user needs to preview, copy or share diagnostics, show only the returned `diagnostic_summary` as JSON and use exactly that object for copying. Do not add raw errors, full tool results, reports, paths, configuration, document text or command lines. Operational output and recovery paths remain available separately for the current task; they are not part of the shareable diagnostic summary.
+
+Use `diagnostic_summary.recovery_action` to explain the next step. Reprepare a changed source before a new attempt and invalidate old report locations or repairs. Review a changed destination, choose another output directory for an existing target, inspect missing dependencies, or wait for an active writer as applicable. These actions and the producer's `reported_retryable` flag do not authorize automatic writes, overwrites or deletion. A read failure has no output publication and returns a structured failed result.
+
 ## Artifact semantics
 
 The Bundle's `document`, `fragment`, and `resource` kinds and its relations describe output semantics. They do not authorize another product's page, node, or workspace structure. Preserve the complete committed Bundle directory unless the user explicitly requests a later import or cleanup operation. Use the returned Bundle for hashes and relationships; the output contains only declared logical artifacts, with no hidden consumer manifest.

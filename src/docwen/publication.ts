@@ -32,7 +32,13 @@ export function publicationFailure(error: unknown, publication: Publication): Do
   const failure =
     error instanceof DocWenMachineError
       ? error
-      : new DocWenMachineError("docwen_output_failed", errorMessage(error));
+      : new DocWenMachineError(
+          error instanceof Error && error.name === "AbortError"
+            ? "docwen_machine_cancelled"
+            : "docwen_output_failed",
+          errorMessage(error),
+          { system_code: error && typeof error === "object" && "code" in error ? error.code : undefined },
+        );
   return new OutputPublicationError(failure, publication);
 }
 
