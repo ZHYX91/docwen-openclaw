@@ -4,6 +4,8 @@
 
 ## 3.0.0 - 2026-09-20
 
+- Update the build/acceptance SDK to OpenClaw 2026.9.5 and the test framework to Vitest 4.1.11; refresh vulnerable development dependencies.
+
 - Require DocWen 0.12.0 or later, Machine Protocol v2 and Artifact Bundle v3; reject older protocols instead of falling back.
 - Validate canonical template IDs, origin, defaults, capability-selected options and document optimizations. Preserve the selected profile when starting DocWen.
 - Reuse one initialized process for each operation's discovery, planning and execution, with per-query deadlines and the overall task budget intact.

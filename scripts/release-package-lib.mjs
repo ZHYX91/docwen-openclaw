@@ -161,7 +161,7 @@ function verifyPackageIdentity(entries) {
     fail("release_openclaw_compat_invalid");
   }
   const build = assertPlainObject(openclaw.build, "release_openclaw_build_invalid");
-  if (build.openclawVersion !== "2026.7.1-2" || build.pluginSdkVersion !== "2026.7.1-2") {
+  if (build.openclawVersion !== "2026.9.5" || build.pluginSdkVersion !== "2026.9.5") {
     fail("release_openclaw_build_invalid");
   }
   const peers = assertPlainObject(pkg.peerDependencies, "release_peer_dependencies_invalid");

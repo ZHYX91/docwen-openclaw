@@ -36,8 +36,8 @@ function packageJson(overrides = {}) {
         minGatewayVersion: "2026.7.1-2",
       },
       build: {
-        openclawVersion: "2026.7.1-2",
-        pluginSdkVersion: "2026.7.1-2",
+        openclawVersion: "2026.9.5",
+        pluginSdkVersion: "2026.9.5",
       },
     },
     peerDependencies: { openclaw: ">=2026.7.1-2 <2027.0.0" },
