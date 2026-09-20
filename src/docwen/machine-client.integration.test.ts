@@ -19,6 +19,12 @@ const packagedClient: typeof PackagedMachineClient | undefined = candidate
 
 const NEUTRAL_JSON = JSON.stringify(NEUTRAL_DOCUMENT);
 const PLAN_JSON = JSON.stringify(NUMBERING_PLAN);
+const SEMANTIC_EXTENSIONS = {
+  structural_tables: true,
+  captions_references: true,
+  extended_headings: true,
+  typed_endnotes: true,
+};
 
 const neutralInput = (neutral: object) => ({
   input_id: "input.neutral-document",
@@ -67,7 +73,7 @@ describe.skipIf(!candidate)("DocWen Machine Protocol v2 packaged exact-two clien
             staging_root: { kind: "local_path", path: staging },
             staging_policy: "require_empty",
           },
-          options: {},
+          options: { markdown_extensions: { input: SEMANTIC_EXTENSIONS } },
         },
       });
 
@@ -101,7 +107,7 @@ describe.skipIf(!candidate)("DocWen Machine Protocol v2 packaged exact-two clien
             staging_root: { kind: "local_path", path: markdownStaging },
             staging_policy: "require_empty",
           },
-          options: {},
+          options: { markdown_extensions: { output: SEMANTIC_EXTENSIONS } },
         },
       });
 
@@ -150,7 +156,7 @@ describe.skipIf(!candidate)("DocWen Machine Protocol v2 packaged exact-two clien
             staging_root: { kind: "local_path", path: staging },
             staging_policy: "require_empty",
           },
-          options: {},
+          options: { markdown_extensions: { input: SEMANTIC_EXTENSIONS } },
         },
       });
       expect.fail("expected task to be rejected");
