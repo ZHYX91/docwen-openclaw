@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   query: vi.fn(),
   task: vi.fn(),
   hooks: {} as {
+    beforeSwap?: () => Promise<void>;
     afterBackupMove?: (backup: string) => Promise<void>;
     cleanupBackup?: (backup: string) => Promise<void>;
   },
@@ -47,6 +48,10 @@ vi.mock("./output-transaction.js", async (original) => {
   const actual = await original<typeof OutputTransactionModule>();
   return {
     ...actual,
+    atomicCommitBundle: (...args: Parameters<typeof actual.atomicCommitBundle>) => {
+      const [bundle, destination, overwrite, hooks, initial] = args;
+      return actual.atomicCommitBundle(bundle, destination, overwrite, { ...hooks, ...mocks.hooks }, initial);
+    },
     atomicReplaceFile: (...args: Parameters<typeof actual.atomicReplaceFile>) => {
       const [destination, replacement, expected, hooks, sourceVersion] = args;
       return actual.atomicReplaceFile(
@@ -125,6 +130,84 @@ async function input() {
 }
 
 describe("write tool publication results", () => {
+  it("honors cancellation immediately before commit and releases the transaction", async () => {
+    const file = await input();
+    const controller = new AbortController();
+    mocks.hooks.beforeSwap = async () => {
+      controller.abort();
+    };
+    const result = await executeDocWenTool(
+      "docwen_number_markdown",
+      { file, operation: "add", inPlace: true },
+      {},
+      controller.signal,
+    );
+    expect(result).toMatchObject({ status: "failed", publication: { state: "not_published" } });
+    expect(await readFile(file, "utf8")).toBe("# Original\n");
+    expect(await readdir(path.dirname(file))).toEqual(["source.md"]);
+    expect(mocks.task).toHaveBeenCalledTimes(1);
+    mocks.hooks = {};
+    expect(
+      await executeDocWenTool("docwen_number_markdown", { file, operation: "add", inPlace: true }, {}),
+    ).toMatchObject({ status: "success" });
+  });
+
+  it("finishes one publication when cancellation arrives after the backup move", async () => {
+    const file = await input();
+    const controller = new AbortController();
+    mocks.hooks.afterBackupMove = async () => {
+      controller.abort();
+    };
+    const result = await executeDocWenTool(
+      "docwen_number_markdown",
+      { file, operation: "add", inPlace: true },
+      {},
+      controller.signal,
+    );
+    expect(controller.signal.aborted).toBe(true);
+    expect(result).toMatchObject({
+      status: "success",
+      publication: { state: "published", retry: "do_not_retry" },
+    });
+    expect(await readFile(file, "utf8")).toBe("# 1. Result\n");
+    expect(await readdir(path.dirname(file))).toEqual(["source.md"]);
+    expect(mocks.task).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a concurrent source edit made after the backup move", async () => {
+    const file = await input();
+    mocks.hooks.afterBackupMove = async (backup) => {
+      await writeFile(backup, "# Concurrent edit\n");
+    };
+    const result = await executeDocWenTool(
+      "docwen_number_markdown",
+      { file, operation: "add", inPlace: true },
+      {},
+    );
+    expect(result).toMatchObject({ status: "failed", publication: { state: "not_published" } });
+    expect(await readFile(file, "utf8")).toBe("# Concurrent edit\n");
+    expect(await readdir(path.dirname(file))).toEqual(["source.md"]);
+    expect(mocks.task).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a destination created by another writer at the final directory commit", async () => {
+    const file = await input();
+    const outputDir = path.join(path.dirname(file), "result");
+    mocks.hooks.beforeSwap = async () => {
+      await mkdir(outputDir);
+      await writeFile(path.join(outputDir, "other.txt"), "other writer");
+    };
+    const result = await executeDocWenTool(
+      "docwen_number_markdown",
+      { file, operation: "add", outputDir },
+      {},
+    );
+    expect(result).toMatchObject({ status: "failed", publication: { state: "not_published" } });
+    expect(await readFile(path.join(outputDir, "other.txt"), "utf8")).toBe("other writer");
+    expect(await readdir(outputDir)).toEqual(["other.txt"]);
+    expect((await readdir(path.dirname(file))).sort()).toEqual(["result", "source.md"]);
+    expect(mocks.task).toHaveBeenCalledTimes(1);
+  });
   it("returns a shareable read-failure summary without inventing a write or invoking a task", async () => {
     const secret = "private-path-and-token";
     mocks.query.mockRejectedValue(
