@@ -134,7 +134,11 @@ class FakeChild extends EventEmitter {
     if (message.method === "task/execute") {
       this.reply(id, { task_id: "task.1", state: "accepted" });
       serverState.executeSeen = true;
-      if (serverState.behavior === "hang_task") return;
+      if (
+        serverState.behavior === "hang_task"
+        || serverState.behavior === "cancel_ack_only"
+        || serverState.behavior === "cancel_ignore"
+      ) return;
       if (serverState.behavior === "remote_failure") {
         queueMicrotask(() =>
           this.notify("task/failed", {
@@ -183,7 +187,9 @@ class FakeChild extends EventEmitter {
     }
     if (message.method === "task/cancel") {
       serverState.cancelRequests += 1;
+      if (serverState.behavior === "cancel_ignore") return;
       this.reply(id, { task_id: "task.1", state: "cancellation_requested" });
+      if (serverState.behavior === "cancel_ack_only") return;
       queueMicrotask(() =>
         this.notify("task/cancelled", {
           task_id: "task.1",
@@ -661,6 +667,24 @@ describe("DocWen Machine Protocol client", () => {
     expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
     expect(await readdir(invocation.staging)).toEqual([]);
   });
+
+  it.each(["cancel_ack_only", "cancel_ignore"])(
+    "bounds cancellation when the server does not send a terminal state: %s",
+    async (behavior) => {
+      serverState.behavior = behavior;
+      const controller = new AbortController();
+      const invocation = await taskInvocation(10_000, controller.signal);
+      const operation = runDocWenMachineTask(invocation.options);
+      await vi.waitFor(() => expect(serverState.executeSeen).toBe(true));
+      controller.abort();
+
+      await expect(operation).rejects.toMatchObject({ code: "docwen_machine_cancelled" });
+      expect(serverState.cancelRequests).toBe(1);
+      expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
+      expect(await readdir(invocation.staging)).toEqual([]);
+    },
+    4_000,
+  );
 
   it("fails closed on stderr overflow and terminates the process tree", async () => {
     serverState.behavior = "stderr_overflow";
