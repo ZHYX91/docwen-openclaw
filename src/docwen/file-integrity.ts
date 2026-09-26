@@ -47,7 +47,10 @@ export async function captureDirectorySnapshot(directory: string): Promise<Direc
   await hashDirectoryTree(directory, "", hash);
   const after = await lstat(directory, { bigint: true });
   if (!samePathIdentity(after, root)) {
-    throw new DocWenMachineError("docwen_output_changed", "The output target changed while it was inspected.");
+    throw new DocWenMachineError(
+      "docwen_output_changed",
+      "The output target changed while it was inspected.",
+    );
   }
   return { root: pathIdentity(after), treeSha256: hash.digest("hex") };
 }
@@ -89,7 +92,10 @@ async function hashDirectoryTree(
       const target = await readlink(fullPath);
       const after = await lstat(fullPath, { bigint: true });
       if (!samePathIdentity(after, identity)) {
-        throw new DocWenMachineError("docwen_output_changed", "An output link changed while it was inspected.");
+        throw new DocWenMachineError(
+          "docwen_output_changed",
+          "An output link changed while it was inspected.",
+        );
       }
       hash.update(`L\0${relative}\0${identity.mode}\0${target}\n`);
       continue;
@@ -99,7 +105,10 @@ async function hashDirectoryTree(
       await hashDirectoryTree(root, relative, hash);
       const after = await lstat(fullPath, { bigint: true });
       if (!samePathIdentity(after, identity)) {
-        throw new DocWenMachineError("docwen_output_changed", "An output directory changed while it was inspected.");
+        throw new DocWenMachineError(
+          "docwen_output_changed",
+          "An output directory changed while it was inspected.",
+        );
       }
       continue;
     }
@@ -107,7 +116,10 @@ async function hashDirectoryTree(
       const digest = await hashFile(fullPath);
       const after = await lstat(fullPath, { bigint: true });
       if (!samePathIdentity(after, identity)) {
-        throw new DocWenMachineError("docwen_output_changed", "An output file changed while it was inspected.");
+        throw new DocWenMachineError(
+          "docwen_output_changed",
+          "An output file changed while it was inspected.",
+        );
       }
       hash.update(
         `F\0${relative}\0${identity.mode}\0${identity.size}\0${identity.mtimeNs}\0${identity.ctimeNs}\0${digest}\n`,
