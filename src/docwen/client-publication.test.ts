@@ -141,11 +141,24 @@ describe("write tool publication results", () => {
       capability_id: "split.pdf.partition",
       operation: "transform",
       input_shape: {
-        slots: [{ role: "source", kind: "resource", media_types: ["application/pdf"], min_items: 1, max_items: 1 }],
+        slots: [
+          {
+            role: "source",
+            kind: "resource",
+            media_types: ["application/pdf"],
+            min_items: 1,
+            max_items: 1,
+          },
+        ],
         undeclared_roles: "reject",
       },
       output_media_types: ["application/pdf"],
-      output_shape: { cardinality: "many", artifact_kinds: ["document"], relation_types: [], atomic_bundle: true },
+      output_shape: {
+        cardinality: "many",
+        artifact_kinds: ["document"],
+        relation_types: [],
+        atomic_bundle: true,
+      },
       options_schema: {},
       availability: "available",
       dependencies: [],
@@ -158,11 +171,7 @@ describe("write tool publication results", () => {
       throw new DocWenMachineError("probe_stop", "planned");
     });
 
-    const result = await executeDocWenTool(
-      "docwen_split_pdf",
-      { file, pages: "1", outputDir },
-      {},
-    );
+    const result = await executeDocWenTool("docwen_split_pdf", { file, pages: "1", outputDir }, {});
 
     expect(plannedKind).toBe("resource");
     expect(result).toMatchObject({ status: "failed", error: { code: "probe_stop" } });
