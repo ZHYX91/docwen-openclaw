@@ -1,6 +1,7 @@
 import { createReadStream, type BigIntStats } from "node:fs";
 import { createHash } from "node:crypto";
-import { lstat } from "node:fs/promises";
+import { lstat, readdir, readlink } from "node:fs/promises";
+import * as path from "node:path";
 import { DocWenMachineError } from "./machine-client.js";
 import { isErrno } from "./publication.js";
 
@@ -11,6 +12,11 @@ export type PathIdentity = Readonly<{
   size: bigint;
   mtimeNs: bigint;
   ctimeNs: bigint;
+}>;
+
+export type DirectorySnapshot = Readonly<{
+  root: PathIdentity;
+  treeSha256: string;
 }>;
 
 export async function assertPathIdentityUnchanged(
@@ -29,6 +35,102 @@ export async function assertPathIdentityUnchanged(
   if (!samePathIdentity(current, expected)) {
     throw new DocWenMachineError("docwen_output_changed", "The output target changed during commit.");
   }
+}
+
+export async function captureDirectorySnapshot(directory: string): Promise<DirectorySnapshot> {
+  const before = await lstat(directory, { bigint: true });
+  if (!before.isDirectory() || before.isSymbolicLink()) {
+    throw new DocWenMachineError("docwen_output_not_directory", "Bundle output must be a real directory.");
+  }
+  const root = pathIdentity(before);
+  const hash = createHash("sha256");
+  await hashDirectoryTree(directory, "", hash);
+  const after = await lstat(directory, { bigint: true });
+  if (!samePathIdentity(after, root)) {
+    throw new DocWenMachineError("docwen_output_changed", "The output target changed while it was inspected.");
+  }
+  return { root: pathIdentity(after), treeSha256: hash.digest("hex") };
+}
+
+export async function assertDirectorySnapshotUnchanged(
+  directory: string,
+  expected: DirectorySnapshot,
+): Promise<void> {
+  let current: DirectorySnapshot;
+  try {
+    current = await captureDirectorySnapshot(directory);
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) {
+      throw new DocWenMachineError("docwen_output_changed", "The output target disappeared during commit.");
+    }
+    throw error;
+  }
+  if (
+    !samePathIdentityFromSnapshot(current.root, expected.root)
+    || current.treeSha256 !== expected.treeSha256
+  ) {
+    throw new DocWenMachineError("docwen_output_changed", "The output contents changed during commit.");
+  }
+}
+
+async function hashDirectoryTree(
+  root: string,
+  relativeDirectory: string,
+  hash: ReturnType<typeof createHash>,
+): Promise<void> {
+  const directory = relativeDirectory
+    ? path.join(root, ...relativeDirectory.split("/"))
+    : root;
+  const names = (await readdir(directory)).sort((left, right) => left.localeCompare(right, "en"));
+  for (const name of names) {
+    const relative = relativeDirectory ? `${relativeDirectory}/${name}` : name;
+    const fullPath = path.join(root, ...relative.split("/"));
+    const before = await lstat(fullPath, { bigint: true });
+    const identity = pathIdentity(before);
+    if (before.isSymbolicLink()) {
+      const target = await readlink(fullPath);
+      const after = await lstat(fullPath, { bigint: true });
+      if (!samePathIdentity(after, identity)) {
+        throw new DocWenMachineError("docwen_output_changed", "An output link changed while it was inspected.");
+      }
+      hash.update(`L\0${relative}\0${identity.mode}\0${target}\n`);
+      continue;
+    }
+    if (before.isDirectory()) {
+      hash.update(`D\0${relative}\0${identity.dev}\0${identity.ino}\0${identity.mode}\n`);
+      await hashDirectoryTree(root, relative, hash);
+      const after = await lstat(fullPath, { bigint: true });
+      if (!samePathIdentity(after, identity)) {
+        throw new DocWenMachineError("docwen_output_changed", "An output directory changed while it was inspected.");
+      }
+      continue;
+    }
+    if (before.isFile()) {
+      const digest = await hashFile(fullPath);
+      const after = await lstat(fullPath, { bigint: true });
+      if (!samePathIdentity(after, identity)) {
+        throw new DocWenMachineError("docwen_output_changed", "An output file changed while it was inspected.");
+      }
+      hash.update(
+        `F\0${relative}\0${identity.mode}\0${identity.size}\0${identity.mtimeNs}\0${identity.ctimeNs}\0${digest}\n`,
+      );
+      continue;
+    }
+    hash.update(
+      `O\0${relative}\0${identity.dev}\0${identity.ino}\0${identity.mode}\0${identity.size}\0${identity.mtimeNs}\0${identity.ctimeNs}\n`,
+    );
+  }
+}
+
+function samePathIdentityFromSnapshot(left: PathIdentity, right: PathIdentity): boolean {
+  return (
+    left.dev === right.dev
+    && left.ino === right.ino
+    && left.mode === right.mode
+    && left.size === right.size
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs
+  );
 }
 
 export async function assertSourceVersionUnchanged(
