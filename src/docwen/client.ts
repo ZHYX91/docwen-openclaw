@@ -931,7 +931,7 @@ function sourceInput(file: string): InputSpec {
 }
 
 function isResourceMediaType(mediaType: string): boolean {
-  return mediaType.startsWith("image/");
+  return mediaType !== MARKDOWN_MEDIA_TYPE && mediaType !== DOCX_MEDIA_TYPE;
 }
 
 function validateInputKindRole(kind: MachineInputKind, role: MachineInputRole): void {
