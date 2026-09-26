@@ -135,10 +135,11 @@ class FakeChild extends EventEmitter {
       this.reply(id, { task_id: "task.1", state: "accepted" });
       serverState.executeSeen = true;
       if (
-        serverState.behavior === "hang_task"
-        || serverState.behavior === "cancel_ack_only"
-        || serverState.behavior === "cancel_ignore"
-      ) return;
+        serverState.behavior === "hang_task" ||
+        serverState.behavior === "cancel_ack_only" ||
+        serverState.behavior === "cancel_ignore"
+      )
+        return;
       if (serverState.behavior === "remote_failure") {
         queueMicrotask(() =>
           this.notify("task/failed", {
