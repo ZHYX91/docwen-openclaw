@@ -220,34 +220,31 @@ describe("OpenClaw Artifact Bundle commit", () => {
         await writeFile(path.join(output, "old.txt"), "replacement inode", "utf8");
       },
     ],
-  ])(
-    "rejects an overwrite when an existing output tree is changed by %s",
-    async (_caseName, mutate) => {
-      const workspace = await root();
-      const output = path.join(workspace, "versioned-output");
-      await mkdir(output);
-      await writeFile(path.join(output, "old.txt"), "original", "utf8");
-      const initial = await preflightOutputDirectory(output, true);
-      const bundle = await oneArtifactBundle(workspace, "tree-conflict", "new");
+  ])("rejects an overwrite when an existing output tree is changed by %s", async (_caseName, mutate) => {
+    const workspace = await root();
+    const output = path.join(workspace, "versioned-output");
+    await mkdir(output);
+    await writeFile(path.join(output, "old.txt"), "original", "utf8");
+    const initial = await preflightOutputDirectory(output, true);
+    const bundle = await oneArtifactBundle(workspace, "tree-conflict", "new");
 
-      await expect(
-        atomicCommitBundle(
-          bundle,
-          output,
-          true,
-          {
-            beforeSwap: () => mutate(output),
-          },
-          initial,
-        ),
-      ).rejects.toMatchObject({
-        code: "docwen_output_changed",
-        details: { publication: { state: "not_published" } },
-      });
+    await expect(
+      atomicCommitBundle(
+        bundle,
+        output,
+        true,
+        {
+          beforeSwap: () => mutate(output),
+        },
+        initial,
+      ),
+    ).rejects.toMatchObject({
+      code: "docwen_output_changed",
+      details: { publication: { state: "not_published" } },
+    });
 
-      expect(await readdir(output)).not.toContain("result.md");
-    },
-  );
+    expect(await readdir(output)).not.toContain("result.md");
+  });
 
   it("detects a replaced output directory immediately before the atomic swap", async () => {
     const workspace = await root();
