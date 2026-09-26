@@ -209,6 +209,43 @@ describe("OpenClaw Artifact Bundle commit", () => {
     expect((await readdir(workspace)).filter((name) => name.includes(".docwen-"))).toEqual([]);
   });
 
+  it.each([
+    ["edit", async (output: string) => writeFile(path.join(output, "old.txt"), "concurrent edit", "utf8")],
+    ["add", async (output: string) => writeFile(path.join(output, "added.txt"), "new file", "utf8")],
+    ["delete", async (output: string) => rm(path.join(output, "old.txt"))],
+    [
+      "replace",
+      async (output: string) => {
+        await rm(path.join(output, "old.txt"));
+        await writeFile(path.join(output, "old.txt"), "replacement inode", "utf8");
+      },
+    ],
+  ])("rejects an overwrite when an existing output tree is changed by %s", async (_caseName, mutate) => {
+    const workspace = await root();
+    const output = path.join(workspace, "versioned-output");
+    await mkdir(output);
+    await writeFile(path.join(output, "old.txt"), "original", "utf8");
+    const initial = await preflightOutputDirectory(output, true);
+    const bundle = await oneArtifactBundle(workspace, "tree-conflict", "new");
+
+    await expect(
+      atomicCommitBundle(
+        bundle,
+        output,
+        true,
+        {
+          beforeSwap: () => mutate(output),
+        },
+        initial,
+      ),
+    ).rejects.toMatchObject({
+      code: "docwen_output_changed",
+      details: { publication: { state: "not_published" } },
+    });
+
+    expect(await readdir(output)).not.toContain("result.md");
+  });
+
   it("detects a replaced output directory immediately before the atomic swap", async () => {
     const workspace = await root();
     const output = path.join(workspace, "replaceable-output");
