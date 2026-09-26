@@ -243,9 +243,9 @@ async function commitTransaction(
         }
       }
       if (
-        movedExisting
-        && publication.state === "published"
-        && !publication.warnings.some((warning) => warning.code === "backup_cleanup_failed")
+        movedExisting &&
+        publication.state === "published" &&
+        !publication.warnings.some((warning) => warning.code === "backup_cleanup_failed")
       ) {
         await cleanupPublicationPath(backup, publication, "backup_cleanup_failed", hooks.cleanupBackup);
       }
