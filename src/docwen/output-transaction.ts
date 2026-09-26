@@ -5,10 +5,13 @@ import * as path from "node:path";
 import { DocWenMachineError, type ValidatedArtifactBundle } from "./machine-client.js";
 import {
   assertCopiedArtifact,
+  assertDirectorySnapshotUnchanged,
   assertPathIdentityUnchanged,
   assertSourceVersionUnchanged,
+  captureDirectorySnapshot,
   hashFile,
   pathIdentity,
+  type DirectorySnapshot,
   type PathIdentity,
 } from "./file-integrity.js";
 import { acquireOutputLock } from "./output-lock.js";
@@ -36,7 +39,7 @@ export type Published<T> = { value: T; publication: Publication };
 export async function preflightOutputDirectory(
   destination: string,
   overwrite: boolean,
-): Promise<PathIdentity | null> {
+): Promise<DirectorySnapshot | null> {
   assertSafeDestination(destination);
   assertDirectoryPublicationSupported();
   try {
@@ -50,7 +53,7 @@ export async function preflightOutputDirectory(
         "Bundle output directory already exists; set overwrite=true explicitly.",
       );
     }
-    return pathIdentity(existing);
+    return captureDirectorySnapshot(destination);
   } catch (error) {
     if (isErrno(error, "ENOENT")) return null;
     throw error;
@@ -62,7 +65,7 @@ export async function atomicCommitBundle(
   destination: string,
   overwrite: boolean,
   hooks: CommitHooks = {},
-  initialDestination?: PathIdentity | null,
+  initialDestination?: DirectorySnapshot | null,
 ): Promise<Published<BundlePaths>> {
   assertSafeDestination(destination);
   await mkdir(path.dirname(destination), { recursive: true });
@@ -81,7 +84,7 @@ export async function atomicCommitBundle(
     await commitTransaction(
       destination,
       "directory",
-      expected,
+      expected?.root ?? null,
       publication,
       assertHeld,
       hooks,
@@ -94,6 +97,8 @@ export async function atomicCommitBundle(
           await assertCopiedArtifact(target, artifact.size_bytes, artifact.sha256);
         }
       },
+      expected ? (current) => assertDirectorySnapshotUnchanged(current, expected) : undefined,
+      expected ? (backup) => assertDirectorySnapshotUnchanged(backup, expected) : undefined,
     );
     return value;
   });
@@ -129,6 +134,7 @@ export async function atomicReplaceFile(
         await assertCopiedArtifact(candidate, expected.sizeBytes, expected.sha256);
         await chmod(candidate, Number(existing.mode));
       },
+      undefined,
       async (backup) => {
         await assertSourceVersionUnchanged(backup, await lstat(backup, { bigint: true }), sourceVersion);
       },
@@ -145,6 +151,7 @@ async function commitTransaction(
   assertHeld: () => void,
   hooks: CommitHooks,
   prepare: (candidate: string) => Promise<void>,
+  verifyExisting?: (destination: string) => Promise<void>,
   verifyBackup?: (backup: string) => Promise<void>,
 ): Promise<void> {
   const root = await mkdtemp(path.join(path.dirname(destination), `.docwen-${path.basename(destination)}-`));
@@ -163,6 +170,7 @@ async function commitTransaction(
     assertHeld();
     if (expected) {
       await assertPathIdentityUnchanged(destination, expected);
+      await verifyExisting?.(destination);
       phase = "backup";
       // backup is a fresh entry in our private transaction directory.
       await rename(destination, backup);
@@ -224,10 +232,25 @@ async function commitTransaction(
     );
   } finally {
     if (publication.state !== "unconfirmed") {
-      if (movedExisting && publication.state === "published") {
+      if (movedExisting && publication.state === "published" && verifyBackup) {
+        try {
+          await verifyBackup(backup);
+        } catch (error) {
+          publication.warnings.push({
+            code: "backup_cleanup_failed",
+            message: `Backup changed after publication and was preserved: ${errorMessage(error)}`,
+            path: backup,
+          });
+        }
+      }
+      if (
+        movedExisting
+        && publication.state === "published"
+        && !publication.warnings.some((warning) => warning.code === "backup_cleanup_failed")
+      ) {
         await cleanupPublicationPath(backup, publication, "backup_cleanup_failed", hooks.cleanupBackup);
       }
-      // Preserve a backup that failed cleanup; a recursive parent removal would
+      // Preserve a backup that failed cleanup or changed after publication; a recursive parent removal would
       // silently undo the warning and discard the only recoverable old output.
       if (!publication.warnings.some((warning) => warning.code === "backup_cleanup_failed")) {
         await cleanupPublicationPath(root, publication, "staging_cleanup_failed", hooks.cleanupStaging);
