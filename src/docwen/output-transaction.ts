@@ -10,7 +10,6 @@ import {
   assertSourceVersionUnchanged,
   captureDirectorySnapshot,
   hashFile,
-  pathIdentity,
   type DirectorySnapshot,
   type PathIdentity,
 } from "./file-integrity.js";
