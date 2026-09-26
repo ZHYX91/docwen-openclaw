@@ -130,6 +130,45 @@ async function input() {
 }
 
 describe("write tool publication results", () => {
+  it("sends public PDF split inputs as resources before task planning", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "docwen-pdf-split-kind-"));
+    roots.push(root);
+    const file = path.join(root, "source.pdf");
+    const outputDir = path.join(root, "split-output");
+    await writeFile(file, Buffer.from("%PDF-1.4\n"));
+
+    const splitCapability = {
+      capability_id: "split.pdf.partition",
+      operation: "transform",
+      input_shape: {
+        slots: [{ role: "source", kind: "resource", media_types: ["application/pdf"], min_items: 1, max_items: 1 }],
+        undeclared_roles: "reject",
+      },
+      output_media_types: ["application/pdf"],
+      output_shape: { cardinality: "many", artifact_kinds: ["document"], relation_types: [], atomic_bundle: true },
+      options_schema: {},
+      availability: "available",
+      dependencies: [],
+      limitations: [],
+    };
+    mocks.query.mockResolvedValue({ initialize: {}, result: { capabilities: [splitCapability] } });
+    let plannedKind: unknown;
+    mocks.task.mockImplementationOnce(async ({ request }) => {
+      plannedKind = request.inputs[0]?.kind;
+      throw new DocWenMachineError("probe_stop", "planned");
+    });
+
+    const result = await executeDocWenTool(
+      "docwen_split_pdf",
+      { file, pages: "1", outputDir },
+      {},
+    );
+
+    expect(plannedKind).toBe("resource");
+    expect(result).toMatchObject({ status: "failed", error: { code: "probe_stop" } });
+    await expect(readdir(outputDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("honors cancellation immediately before commit and releases the transaction", async () => {
     const file = await input();
     const controller = new AbortController();
