@@ -66,8 +66,8 @@ export async function assertDirectorySnapshotUnchanged(
     throw error;
   }
   if (
-    !samePathIdentityFromSnapshot(current.root, expected.root)
-    || current.treeSha256 !== expected.treeSha256
+    !samePathIdentityFromSnapshot(current.root, expected.root) ||
+    current.treeSha256 !== expected.treeSha256
   ) {
     throw new DocWenMachineError("docwen_output_changed", "The output contents changed during commit.");
   }
@@ -78,9 +78,7 @@ async function hashDirectoryTree(
   relativeDirectory: string,
   hash: ReturnType<typeof createHash>,
 ): Promise<void> {
-  const directory = relativeDirectory
-    ? path.join(root, ...relativeDirectory.split("/"))
-    : root;
+  const directory = relativeDirectory ? path.join(root, ...relativeDirectory.split("/")) : root;
   const names = (await readdir(directory)).sort((left, right) => left.localeCompare(right, "en"));
   for (const name of names) {
     const relative = relativeDirectory ? `${relativeDirectory}/${name}` : name;
@@ -124,12 +122,12 @@ async function hashDirectoryTree(
 
 function samePathIdentityFromSnapshot(left: PathIdentity, right: PathIdentity): boolean {
   return (
-    left.dev === right.dev
-    && left.ino === right.ino
-    && left.mode === right.mode
-    && left.size === right.size
-    && left.mtimeNs === right.mtimeNs
-    && left.ctimeNs === right.ctimeNs
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
   );
 }
 
