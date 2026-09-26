@@ -133,13 +133,16 @@ async function hashDirectoryTree(
 }
 
 function samePathIdentityFromSnapshot(left: PathIdentity, right: PathIdentity): boolean {
+  // Renaming the output directory into our private backup changes the root
+  // directory ctime on normal filesystems. The move is already bound by
+  // dev/ino and the remaining stable root metadata; the recursive tree hash
+  // protects child entries and file contents.
   return (
     left.dev === right.dev &&
     left.ino === right.ino &&
     left.mode === right.mode &&
     left.size === right.size &&
-    left.mtimeNs === right.mtimeNs &&
-    left.ctimeNs === right.ctimeNs
+    left.mtimeNs === right.mtimeNs
   );
 }
 
