@@ -41,22 +41,23 @@ export async function preflightOutputDirectory(
 ): Promise<DirectorySnapshot | null> {
   assertSafeDestination(destination);
   assertDirectoryPublicationSupported();
+  let existing;
   try {
-    const existing = await lstat(destination, { bigint: true });
-    if (!existing.isDirectory() || existing.isSymbolicLink()) {
-      throw new DocWenMachineError("docwen_output_not_directory", "Bundle output must be a real directory.");
-    }
-    if (!overwrite) {
-      throw new DocWenMachineError(
-        "docwen_output_exists",
-        "Bundle output directory already exists; set overwrite=true explicitly.",
-      );
-    }
-    return captureDirectorySnapshot(destination);
+    existing = await lstat(destination, { bigint: true });
   } catch (error) {
     if (isErrno(error, "ENOENT")) return null;
     throw error;
   }
+  if (!existing.isDirectory() || existing.isSymbolicLink()) {
+    throw new DocWenMachineError("docwen_output_not_directory", "Bundle output must be a real directory.");
+  }
+  if (!overwrite) {
+    throw new DocWenMachineError(
+      "docwen_output_exists",
+      "Bundle output directory already exists; set overwrite=true explicitly.",
+    );
+  }
+  return captureDirectorySnapshot(destination);
 }
 
 export async function atomicCommitBundle(
