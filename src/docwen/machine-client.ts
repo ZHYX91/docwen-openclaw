@@ -15,6 +15,7 @@ export type { JsonObject } from "./machine-framing.js";
 const CLIENT_NAME = "DocWen OpenClaw";
 const CLIENT_VERSION = (createRequire(import.meta.url)("../../package.json") as { version: string }).version;
 const STDERR_LIMIT_BYTES = 256 * 1024;
+const CANCELLATION_GRACE_MS = 2_000;
 const MAX_ARTIFACT_COUNT = 256;
 const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
 const MAX_ARTIFACT_BUNDLE_BYTES = 1024 * 1024 * 1024;
@@ -452,6 +453,10 @@ async function withSession<T>(
   const session = new MachineSession(options.binaryPath, options.locale);
   let taskId: string | null = null;
   let timedOut = false;
+  let abortHandled = false;
+  let cancellationTimer: ReturnType<typeof setTimeout> | null = null;
+  const cancelled = () =>
+    new DocWenMachineError("docwen_machine_cancelled", "DocWen operation was cancelled.");
   const timer = setTimeout(() => {
     timedOut = true;
     session.fail(
@@ -462,24 +467,39 @@ async function withSession<T>(
     void session.terminate();
   }, options.timeoutMs);
   const onAbort = (): void => {
-    if (taskId) session.requestCancellation(taskId);
-    else {
-      session.fail(new DocWenMachineError("docwen_machine_cancelled", "DocWen operation was cancelled."));
+    if (abortHandled) return;
+    abortHandled = true;
+    clearTimeout(timer);
+    const failure = cancelled();
+    if (taskId) {
+      try {
+        session.requestCancellation(taskId);
+      } catch {
+        session.fail(failure);
+        void session.terminate();
+        return;
+      }
+      cancellationTimer = setTimeout(() => {
+        session.fail(failure);
+        void session.terminate();
+      }, CANCELLATION_GRACE_MS);
+    } else {
+      session.fail(failure);
       void session.terminate();
     }
   };
   options.signal?.addEventListener("abort", onAbort, { once: true });
+  if (options.signal?.aborted) onAbort();
   try {
     const result = await body(session, (value) => {
       taskId = value;
     });
-    if (options.signal?.aborted) {
-      throw new DocWenMachineError("docwen_machine_cancelled", "DocWen operation was cancelled.");
-    }
+    if (options.signal?.aborted) throw cancelled();
     await session.close();
     return result;
   } catch (error) {
     await session.terminate();
+    if (options.signal?.aborted) throw cancelled();
     if (timedOut) {
       throw new DocWenMachineError("docwen_machine_timeout", "DocWen Machine Protocol timed out.", {
         timeoutMs: options.timeoutMs,
@@ -488,6 +508,7 @@ async function withSession<T>(
     throw error;
   } finally {
     clearTimeout(timer);
+    if (cancellationTimer) clearTimeout(cancellationTimer);
     options.signal?.removeEventListener("abort", onAbort);
   }
 }
