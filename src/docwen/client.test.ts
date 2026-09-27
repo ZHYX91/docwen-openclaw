@@ -246,6 +246,41 @@ describe("OpenClaw Artifact Bundle commit", () => {
     expect(await readdir(output)).not.toContain("result.md");
   });
 
+  it.each([false, true])(
+    "preserves edits after backup rename when rollback is blocked: %s",
+    async (blocked) => {
+      const workspace = await root();
+      const output = path.join(workspace, "edited-backup");
+      await mkdir(output);
+      await writeFile(path.join(output, "old.txt"), "original");
+      const initial = await preflightOutputDirectory(output, true);
+      const bundle = await oneArtifactBundle(workspace, "backup-conflict", "new");
+      let retainedBackup = "";
+      await expect(
+        atomicCommitBundle(
+          bundle,
+          output,
+          true,
+          {
+            afterBackupMove: async (backup) => {
+              retainedBackup = backup;
+              await writeFile(path.join(backup, "old.txt"), "concurrent edit");
+              if (blocked) await mkdir(output);
+            },
+          },
+          initial,
+        ),
+      ).rejects.toMatchObject({
+        code: blocked ? "docwen_commit_rollback_failed" : "docwen_output_changed",
+        details: { publication: { state: blocked ? "unconfirmed" : "not_published" } },
+      });
+      expect(await readFile(path.join(blocked ? retainedBackup : output, "old.txt"), "utf8")).toBe(
+        "concurrent edit",
+      );
+      await expect(readFile(path.join(output, "result.md"))).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
   it("detects a replaced output directory immediately before the atomic swap", async () => {
     const workspace = await root();
     const output = path.join(workspace, "replaceable-output");

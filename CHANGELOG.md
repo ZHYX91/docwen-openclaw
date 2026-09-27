@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 3.0.1 - 2026-09-27
+
+- Detect edits within existing output directories across overwrite and rollback boundaries, preserving recovery material when publication cannot be confirmed.
+- Submit PDF split sources as resources according to the Core input contract.
+- Bound cancellation shutdown independently of the ordinary operation timeout, including unresponsive child processes.
+
 ## 3.0.0 - 2026-09-20
 
 - Update the build/acceptance SDK to OpenClaw 2026.9.5 and the test framework to Vitest 4.1.11; refresh vulnerable development dependencies.

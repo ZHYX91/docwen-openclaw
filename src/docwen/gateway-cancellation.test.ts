@@ -30,7 +30,7 @@ vi.mock("node:child_process", async (original) => {
         for (const message of decoder.feed(data)) {
           const result = message.result as { state?: string } | undefined;
           if (
-            (state.phase === "accepted" && result?.state === "accepted") ||
+            (state.phase !== "running" && result?.state === "accepted") ||
             (state.phase === "running" && message.method === "task/progress")
           ) {
             // Let the real client consume this exact frame before releasing the test barrier.
@@ -63,7 +63,12 @@ function handle(message) {
     case 'capability/list': reply({capabilities:[{capability_id:'transform.markdown.heading_numbering',operation:'transform',input_shape:{slots:[{role:'source',kind:'document',media_types:['text/markdown'],min_items:1,max_items:1}],undeclared_roles:'reject'},output_media_types:['text/markdown'],output_shape:{cardinality:'one',artifact_kinds:['document'],relation_types:[],atomic_bundle:true},options_schema:{},availability:'available',dependencies:[],limitations:[]}]}); break;
     case 'task/plan': reply({plan_id:'plan.1'}); break;
     case 'task/execute': reply({task_id:'task.1',state:'accepted'}); if(phase==='running') notify('task/progress'); break;
-    case 'task/cancel': reply({task_id:'task.1',state:'cancellation_requested'}); notify('task/cancelled'); break;
+    case 'task/cancel':
+      if(phase==='ignore') break;
+      if(phase==='disconnect') { process.exit(0); break; }
+      reply({task_id:'task.1',state:'cancellation_requested'});
+      if(phase!=='ack_only') notify('task/cancelled');
+      break;
     default: throw Error('Unexpected request: '+message.method);
   }
 }
@@ -90,7 +95,7 @@ afterEach(async () => {
 });
 
 describe("Gateway tool adapter cancellation with a controlled real subprocess", () => {
-  it.each(["accepted", "running"])(
+  it.each(["accepted", "running", "ack_only", "ignore", "disconnect"])(
     "cancels exactly at %s without publication or retained task work",
     async (phase) => {
       const root = await mkdtemp(join(tmpdir(), "docwen-cancel-boundary-"));
@@ -114,7 +119,7 @@ describe("Gateway tool adapter cancellation with a controlled real subprocess", 
       const tool = definitions.find((definition) => definition.name === "docwen_number_markdown")!;
       const operation = tool.execute(
         { file: source, operation: "add", inPlace: true },
-        { writeTimeoutMs: 5000 },
+        { writeTimeoutMs: 30000 },
         { signal: controller.signal },
       );
       await Promise.race([
@@ -123,6 +128,7 @@ describe("Gateway tool adapter cancellation with a controlled real subprocess", 
           throw new Error(`Ended before boundary: ${JSON.stringify(result)}`);
         }),
       ]);
+      const cancelledAt = performance.now();
       controller.abort();
       expect(await operation).toMatchObject({
         status: "failed",
@@ -130,6 +136,7 @@ describe("Gateway tool adapter cancellation with a controlled real subprocess", 
         publication: { state: "not_published" },
       });
       await state.closed;
+      expect(performance.now() - cancelledAt).toBeLessThan(10000);
       expect(state.child!.exitCode !== null || state.child!.signalCode !== null).toBe(true);
       expect(await readFile(source, "utf8")).toBe("# Original\n");
       const trace = (await readFile(state.trace, "utf8"))
