@@ -1,0 +1,10 @@
+{
+  "sourceSha256": "d914772e80779dabf01c6c8a4725cfe5dfda2695613e1139b220ae55d86c9a36",
+  "defSha256": "bc2e98d7876f86919376bd0cc36b9b9283f4afe353a9bb03136837b60e31a6bc",
+  "binarySha256": "27284d8d23bdf7bad5c7b16d13ccd2554070387e014d9dc75ee1d7e352dd96d1",
+  "platform": "win32",
+  "arch": "x64",
+  "compiler": "clang 17.0.0 (swiftlang llvm 10999b6d034fe318f3d56c83bddb6572593a8bb0)",
+  "linker": "LLD 17.0.0 (swiftlang llvm 10999b6d034fe318f3d56c83bddb6572593a8bb0)",
+  "timestamp": 0
+}
