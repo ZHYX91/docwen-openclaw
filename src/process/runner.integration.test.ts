@@ -8,12 +8,17 @@ import { expect, it, vi } from "vitest";
 
 const deniedReads = vi.hoisted(() => new Set<string>());
 const observedDenials = vi.hoisted(() => new Set<string>());
+const selfStatus = vi.hoisted(() => ({ value: undefined as string | undefined, reads: 0 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof FsPromises>();
   return {
     ...original,
     readFile: (...args: Parameters<typeof original.readFile>) => {
       const file = String(args[0]);
+      if (file === "/proc/self/status" && selfStatus.value !== undefined) {
+        selfStatus.reads += 1;
+        return Promise.resolve(selfStatus.value);
+      }
       if (deniedReads.has(file)) {
         observedDenials.add(file);
         return Promise.reject(Object.assign(new Error("Injected procfs read denial"), { code: "EACCES" }));
@@ -68,11 +73,15 @@ it
     "member-stat-denied",
     "member-both-denied",
     "unrelated-both-denied",
+    "outer-procfs",
+    "unknown-procfs",
   ] as const)(
   "checks a delayed-reap owned group without mistaking procfs uncertainty for live membership: %s",
   async (scenario) => {
     deniedReads.clear();
     observedDenials.clear();
+    selfStatus.value = undefined;
+    selfStatus.reads = 0;
     const supervisor = spawn("python3", ["-c", supervisorScript], {
       stdio: ["pipe", "pipe", "inherit"],
       windowsHide: true,
@@ -101,15 +110,17 @@ it
       // The supervisor is a real unrelated sentinel in the test runner's
       // process group. Its child established its own group with setsid().
       const deniedPid = scenario.startsWith("unrelated") ? supervisor.pid! : ready.helperPid;
-      if (scenario !== "normal") deniedReads.add(`/proc/${deniedPid}/stat`);
+      if (scenario.includes("denied")) deniedReads.add(`/proc/${deniedPid}/stat`);
       if (scenario.endsWith("both-denied")) deniedReads.add(`/proc/${deniedPid}/status`);
+      if (scenario === "outer-procfs") selfStatus.value = `NSpid:\t999999 ${process.pid}\n`;
+      if (scenario === "unknown-procfs") selfStatus.value = "Name:\ttest\n";
 
       const startedAt = performance.now();
       const cleanup = terminateProcessTree(supervisor, {
         kind: "posix-process-group",
         processGroupId: ready.pgid,
       });
-      if (scenario.endsWith("both-denied")) {
+      if (scenario.endsWith("both-denied") || scenario.endsWith("procfs")) {
         await expect(cleanup).rejects.toMatchObject({ reason: "process_group_state_unconfirmed" });
       } else {
         await cleanup;
@@ -118,6 +129,7 @@ it
       expect(supervisor.exitCode).toBeNull();
       expect(process.kill(supervisor.pid!, 0)).toBe(true);
       for (const denied of deniedReads) expect(observedDenials.has(denied)).toBe(true);
+      if (scenario.endsWith("procfs")) expect(selfStatus.reads).toBeGreaterThan(0);
 
       // The subreaper deliberately withholds waitpid here. The helper is dead
       // but remains present in /proc as a zombie, which must not be treated as
@@ -146,6 +158,7 @@ it
       await terminateProcessTree(supervisor, { kind: "posix-process-group", processGroupId: ready.pgid });
     } finally {
       deniedReads.clear();
+      selfStatus.value = undefined;
       lines.close();
       if (ownedGroupId !== undefined) {
         try {

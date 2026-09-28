@@ -180,6 +180,18 @@ async function processGroupState(processGroupId: number): Promise<GroupState> {
   // ESRCH is authoritative even when unrelated procfs entries cannot be read.
   if (!processGroupExists(processGroupId)) return "gone";
   if (process.platform !== "linux") return "live";
+  // procfs may have been inherited from an ancestor PID namespace. Its stat
+  // and first NSpgid values are comparable with kill()/child.pid only when
+  // this process has exactly one namespace ID in that procfs view.
+  try {
+    const status = await readFile("/proc/self/status", "utf8");
+    const ownIds = /^NSpid:[\t ]+([\d\t ]+)[\t ]*$/mu.exec(status)?.[1]?.trim().split(/\s+/u);
+    if (ownIds?.length !== 1 || Number(ownIds[0]) !== process.pid) {
+      return processGroupExists(processGroupId) ? "unconfirmed" : "gone";
+    }
+  } catch {
+    return processGroupExists(processGroupId) ? "unconfirmed" : "gone";
+  }
 
   let entries;
   try {
