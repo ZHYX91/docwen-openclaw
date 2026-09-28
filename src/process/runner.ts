@@ -52,7 +52,7 @@ export async function terminateProcessTree(
       throw new ProcessTreeTerminationError(
         "linux_owner_unconfirmed",
         "Linux owned process cleanup could not be confirmed.",
-        linuxOwnerErrorDetails(error),
+        ownership.diagnostics ?? linuxOwnerErrorDetails(error),
       );
     } finally {
       if (timer !== undefined) clearTimeout(timer);

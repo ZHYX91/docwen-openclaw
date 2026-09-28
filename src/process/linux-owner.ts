@@ -15,7 +15,12 @@ import type { Duplex } from "node:stream";
 
 // Updated together with the reviewed native source, payload and build receipt.
 export const LINUX_OWNER_SHA256 = "6cdaabc6cfd844cbda6dcfee284e91b6320417830e1afae4366300a109125c51";
-export type LinuxOwner = Readonly<{ kind: "linux-supervisor"; completion: Promise<void>; stop: () => void }>;
+export type LinuxOwner = Readonly<{
+  kind: "linux-supervisor";
+  completion: Promise<void>;
+  stop: () => void;
+  diagnostics?: Record<string, string>;
+}>;
 
 const imageFailures = new WeakMap<Error, Record<string, string>>();
 export function linuxOwnerErrorDetails(error: unknown): Record<string, string> | undefined {
@@ -114,7 +119,12 @@ export function spawnLinuxOwnedMachine(
     if (imageFailure) imageFailures.set(error, imageFailure);
     rejectCompletion(error);
     stop();
-    if (emit) child.emit("error", error);
+    // Consumers handle the first startup notification once. Subsequent owner
+    // failures belong to completion, including after an image startup error.
+    if (emit && !startupError) {
+      startupError = true;
+      child.emit("error", error);
+    }
   };
   control.on("data", (bytes: Buffer) => {
     if (failed || done) return;
@@ -160,6 +170,7 @@ export function spawnLinuxOwnedMachine(
   control.on("error", () => fail("Linux owner control channel failed."));
   child.once("error", (error) => {
     if (startupError) return;
+    startupError = true;
     try {
       cleanImage();
     } catch (cleanup) {
@@ -179,11 +190,24 @@ export function spawnLinuxOwnedMachine(
       if (!imageFailure) {
         const error = new Error("Linux owner executable cleanup remained incomplete.");
         recordImageFailure(error, cleanup);
-        child.emit("error", error);
+        if (!startupError) {
+          startupError = true;
+          child.emit("error", error);
+        }
       }
     }
     if (!done) fail("Linux owner exited without confirmed cleanup.", false);
     control.destroy();
   });
-  return { child, ownership: { kind: "linux-supervisor", completion, stop } };
+  return {
+    child,
+    ownership: {
+      kind: "linux-supervisor",
+      completion,
+      stop,
+      get diagnostics() {
+        return imageFailure;
+      },
+    },
+  };
 }

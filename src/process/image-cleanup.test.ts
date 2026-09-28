@@ -131,4 +131,53 @@ describe.skipIf(process.platform !== "linux")("native image cleanup failures", (
     expect(JSON.stringify(failure)).not.toContain("private path");
     expect(JSON.stringify(failure)).not.toContain("docwen-owner-");
   });
+  it.each([
+    ["image_unlink", "deadline"],
+    ["directory_remove", "deadline"],
+    ["image_unlink", "control-error"],
+    ["directory_remove", "control-error"],
+  ] as const)("keeps %s facts after %s without a second child error", async (phase, fault) => {
+    await inject(phase);
+    const { child, ownership } = spawnLinuxOwnedMachine(process.execPath, {
+      cwd: tmpdir(), env: process.env, shell: false, windowsHide: true,
+    });
+    const control = child.stdio[3] as Duplex;
+    const end = control.end.bind(control);
+    vi.spyOn(control, "end").mockImplementation(() => {
+      // Pause the real owner at START; still close the actual control write end.
+      child.kill("SIGSTOP");
+      return end();
+    });
+    const write = vi.spyOn(control, "write");
+    const startup = new Promise<Error>((resolve) => child.once("error", resolve));
+    const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+    try {
+      await startup;
+      expect(child.listenerCount("error")).toBe(0);
+      if (fault === "control-error")
+        control.destroy(Object.assign(new Error("private control failure"), { code: "EIO" }));
+      const result = await terminateProcessTree(child, ownership).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(result).toMatchObject({
+        reason: "linux_owner_unconfirmed",
+        diagnostics: { cleanupObject: "owner_image", cleanupPhase: phase, cleanupSystemCode: "EACCES" },
+      });
+      expect(write).not.toHaveBeenCalled();
+      expect(JSON.stringify(result)).not.toContain("private");
+      expect(JSON.stringify(result)).not.toContain("docwen-owner-");
+      // Recovery occurs after the recorded failure, not as evidence of timely cleanup.
+      child.kill("SIGCONT");
+      await closed;
+      if (fault === "deadline") await expect(ownership.completion).resolves.toBeUndefined();
+      expect(result).toMatchObject({ reason: "linux_owner_unconfirmed" });
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGCONT");
+        child.kill("SIGKILL");
+      }
+      await closed;
+    }
+  });
 });
