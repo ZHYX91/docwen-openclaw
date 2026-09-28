@@ -62,11 +62,18 @@ function handle(message) {
     case 'initialize': reply({protocol:{name:'docwen.machine',major:2,minor:0},server:{name:'DocWen',version:'0.12.1'},artifact_bundle_schema:'docwen.artifact_bundle.v3'}); break;
     case 'capability/list': reply({capabilities:[{capability_id:'transform.markdown.heading_numbering',operation:'transform',input_shape:{slots:[{role:'source',kind:'document',media_types:['text/markdown'],min_items:1,max_items:1}],undeclared_roles:'reject'},output_media_types:['text/markdown'],output_shape:{cardinality:'one',artifact_kinds:['document'],relation_types:[],atomic_bundle:true},options_schema:{},availability:'available',dependencies:[],limitations:[]}]}); break;
     case 'task/plan': reply({plan_id:'plan.1'}); break;
-    case 'task/execute':
-      if(phase==='stdin_closed') { process.stdin.destroy(); setInterval(()=>{},1000); }
-      reply({task_id:'task.1',state:'accepted'});
-      if(phase==='running' || phase==='stdin_closed') notify('task/progress');
+    case 'task/execute': {
+      const accepted = () => {
+        reply({task_id:'task.1',state:'accepted'});
+        if(phase==='running' || phase==='stdin_closed') notify('task/progress');
+      };
+      if(phase==='stdin_closed') {
+        setInterval(()=>{},1000);
+        process.stdin.once('close', accepted);
+        process.stdin.destroy();
+      } else accepted();
       break;
+    }
     case 'task/cancel':
       if(phase==='ignore') break;
       if(phase==='disconnect') { process.exit(0); break; }
