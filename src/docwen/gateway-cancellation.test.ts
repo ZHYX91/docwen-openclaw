@@ -39,7 +39,7 @@ vi.mock("node:child_process", async (original) => {
         child.stdout!.on("data", (data: Buffer) => {
           for (const message of decoder.feed(data)) {
             const result = message.result as { state?: string } | undefined;
-            const phase = currentPhase();
+            const phase = state.phase;
             if (
               (phase !== "running" && result?.state === "accepted") ||
               (phase === "running" && message.method === "task/progress")
@@ -53,10 +53,6 @@ vi.mock("node:child_process", async (original) => {
     },
   };
 });
-
-function currentPhase(): string {
-  return state.phase;
-}
 
 // Controlled producer fixture, not a substitute for real DocWen/Gateway acceptance.
 // The plugin adapter, consumer, framing, process teardown and temporary cleanup are real.
