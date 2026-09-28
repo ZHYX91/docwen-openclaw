@@ -1,190 +1,110 @@
 import { spawn } from "node:child_process";
-import { once } from "node:events";
-import type * as FsPromises from "node:fs/promises";
-import { readFile } from "node:fs/promises";
-import { createInterface } from "node:readline";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { expect, it } from "vitest";
+import { spawnOwnedMachineProcess, terminateProcessTree } from "./runner.js";
 
-import { expect, it, vi } from "vitest";
-
-const deniedReads = vi.hoisted(() => new Set<string>());
-const observedDenials = vi.hoisted(() => new Set<string>());
-const selfStatus = vi.hoisted(() => ({ value: undefined as string | undefined, reads: 0 }));
-vi.mock("node:fs/promises", async (importOriginal) => {
-  const original = await importOriginal<typeof FsPromises>();
-  return {
-    ...original,
-    readFile: (...args: Parameters<typeof original.readFile>) => {
-      const file = String(args[0]);
-      if (file === "/proc/self/status" && selfStatus.value !== undefined) {
-        selfStatus.reads += 1;
-        return Promise.resolve(selfStatus.value);
-      }
-      if (deniedReads.has(file)) {
-        observedDenials.add(file);
-        return Promise.reject(Object.assign(new Error("Injected procfs read denial"), { code: "EACCES" }));
-      }
-      return original.readFile(...args);
-    },
-  };
-});
-
-import { terminateProcessTree } from "./runner.js";
-
-const supervisorScript = String.raw`
-import ctypes, json, os, sys, time
-
-libc = ctypes.CDLL(None)
-if libc.prctl(36, 1, 0, 0, 0) != 0:
-    raise OSError(ctypes.get_errno(), "PR_SET_CHILD_SUBREAPER failed")
-
-read_fd, write_fd = os.pipe()
-root = os.fork()
-if root == 0:
-    os.close(read_fd)
-    os.setsid()
-    helper = os.fork()
-    if helper == 0:
-        os.close(write_fd)
-        while True:
-            time.sleep(60)
-    os.write(write_fd, f"{os.getpid()} {helper}\n".encode())
-    os.close(write_fd)
+// Native lifetime boundary with controlled peers; not DocWen/Gateway acceptance.
+const peer = `#!/usr/bin/python3
+import json, os, sys, time
+mode = os.environ['DOCWEN_OWNER_TEST_MODE']
+helper = os.fork()
+if helper == 0:
+    null = os.open('/dev/null', os.O_RDWR)
+    for fd in (0,1,2): os.dup2(null, fd)
+    os.close(null)
+    while True: time.sleep(10)
+if mode == 'epipe': os.close(0)
+print(json.dumps({'root':os.getpid(),'guard':os.getppid(),'helper':helper}),flush=True)
+if mode == 'normal':
+    sys.stdin.buffer.read()
     os._exit(0)
-
-os.close(write_fd)
-payload = os.read(read_fd, 128).decode().strip()
-os.close(read_fd)
-root_pid, helper_pid = [int(value) for value in payload.split()]
-os.waitpid(root, 0)
-print(json.dumps({"rootPid": root_pid, "helperPid": helper_pid, "pgid": root_pid}), flush=True)
-
-command = sys.stdin.readline().strip()
-if command != "reap":
-    raise RuntimeError("unexpected supervisor command")
-reaped, _ = os.waitpid(helper_pid, 0)
-print(json.dumps({"reapedPid": reaped}), flush=True)
+while True: time.sleep(10)
 `;
-
-it
-  .skipIf(process.platform !== "linux")
-  .each([
-    "normal",
-    "unrelated-stat-denied",
-    "member-stat-denied",
-    "member-both-denied",
-    "unrelated-both-denied",
-    "outer-procfs",
-    "unknown-procfs",
-  ] as const)(
-  "checks a delayed-reap owned group without mistaking procfs uncertainty for live membership: %s",
-  async (scenario) => {
-    deniedReads.clear();
-    observedDenials.clear();
-    selfStatus.value = undefined;
-    selfStatus.reads = 0;
-    const supervisor = spawn("python3", ["-c", supervisorScript], {
-      stdio: ["pipe", "pipe", "inherit"],
+async function live(pid: number): Promise<boolean> {
+  try {
+    const s = await readFile(`/proc/${pid}/stat`, "utf8");
+    return !["Z", "X", "x"].includes(s.slice(s.lastIndexOf(")") + 2).split(" ")[0]!);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+function bounded<T>(promise: Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("native owner fixture timed out")), 4000);
+    promise.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
+it.skipIf(process.platform !== "linux").each(["normal", "epipe", "wrapper-crash", "guardian-crash"])(
+  "owns real processes through %s and never signals an unrelated sentinel",
+  async (mode) => {
+    const root = await mkdtemp(join(tmpdir(), "docwen-owned-process-"));
+    const script = join(root, "peer.py");
+    await writeFile(script, peer, { mode: 0o700 });
+    const sentinel = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+    const owned = spawnOwnedMachineProcess(script, {
+      cwd: root,
+      env: { ...process.env, DOCWEN_OWNER_TEST_MODE: mode },
+      shell: false,
       windowsHide: true,
     });
-    const lines = createInterface({ input: supervisor.stdout });
-    const iterator = lines[Symbol.asyncIterator]();
-    let ownedGroupId: number | undefined;
-    let helperPid: number | undefined;
-
+    owned.child.on("error", () => {});
+    const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+      owned.child.once("close", (code, signal) => resolve({ code, signal })),
+    );
     try {
-      const first = await Promise.race([
-        iterator.next(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Timed out waiting for delayed-reaper fixture.")), 3_000),
-        ),
-      ]);
-      expect(first.done).toBe(false);
-      const ready = JSON.parse(first.value!) as { rootPid: number; helperPid: number; pgid: number };
-      ownedGroupId = ready.pgid;
-      helperPid = ready.helperPid;
-      expect(ready.rootPid).toBe(ready.pgid);
-      const before = await linuxProcessState(ready.helperPid);
-      expect(before).not.toBe("Z");
-      expect(before).not.toBe("X");
-
-      // The supervisor is a real unrelated sentinel in the test runner's
-      // process group. Its child established its own group with setsid().
-      const deniedPid = scenario.startsWith("unrelated") ? supervisor.pid! : ready.helperPid;
-      if (scenario.includes("denied")) deniedReads.add(`/proc/${deniedPid}/stat`);
-      if (scenario.endsWith("both-denied")) deniedReads.add(`/proc/${deniedPid}/status`);
-      if (scenario === "outer-procfs") selfStatus.value = `NSpid:\t999999 ${process.pid}\n`;
-      if (scenario === "unknown-procfs") selfStatus.value = "Name:\ttest\n";
-
-      const startedAt = performance.now();
-      const cleanup = terminateProcessTree(supervisor, {
-        kind: "posix-process-group",
-        processGroupId: ready.pgid,
-      });
-      if (scenario.endsWith("both-denied") || scenario.endsWith("procfs")) {
-        await expect(cleanup).rejects.toMatchObject({ reason: "process_group_state_unconfirmed" });
-      } else {
-        await cleanup;
-        expect(performance.now() - startedAt).toBeLessThan(1_500);
+      const meta = await bounded(
+        new Promise<{ root: number; guard: number; helper: number }>((resolve, reject) => {
+          let text = "";
+          owned.child.stdout.on("data", (b: Buffer) => {
+            text += b.toString();
+            if (text.includes("\n")) {
+              try {
+                resolve(JSON.parse(text.split("\n")[0]!));
+              } catch (error) {
+                reject(error);
+              }
+            }
+          });
+          owned.child.once("error", reject);
+        }),
+      );
+      if (mode === "normal") owned.child.stdin.end();
+      if (mode === "epipe") {
+        const broken = new Promise<string | undefined>((resolve) =>
+          owned.child.stdin.once("error", (error: NodeJS.ErrnoException) => resolve(error.code)),
+        );
+        owned.child.stdin.write(Buffer.alloc(1024 * 1024));
+        expect(await bounded(broken)).toBe("EPIPE");
       }
-      expect(supervisor.exitCode).toBeNull();
-      expect(process.kill(supervisor.pid!, 0)).toBe(true);
-      for (const denied of deniedReads) expect(observedDenials.has(denied)).toBe(true);
-      if (scenario.endsWith("procfs")) expect(selfStatus.reads).toBeGreaterThan(0);
-
-      // The subreaper deliberately withholds waitpid here. The helper is dead
-      // but remains present in /proc as a zombie, which must not be treated as
-      // a live process-tree leak.
-      expect(await linuxProcessState(ready.helperPid)).toBe("Z");
-
-      deniedReads.clear();
-      supervisor.stdin.end("reap\n");
-      const second = await Promise.race([
-        iterator.next(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Timed out waiting for controlled reap.")), 3_000),
-        ),
-      ]);
-      expect(second.done).toBe(false);
-      expect(JSON.parse(second.value!)).toEqual({ reapedPid: ready.helperPid });
-      const [code] = (await once(supervisor, "close")) as [number | null];
-      expect(code).toBe(0);
-      await expect(readFile(`/proc/${ready.helperPid}/stat`, "utf8")).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-      // Once the group is gone, procfs restrictions cannot turn ESRCH into
-      // a cleanup failure. A still-live unrelated PID remains untouched.
-      deniedReads.add(`/proc/${process.pid}/stat`);
-      deniedReads.add(`/proc/${process.pid}/status`);
-      await terminateProcessTree(supervisor, { kind: "posix-process-group", processGroupId: ready.pgid });
+      if (mode === "wrapper-crash") owned.child.kill("SIGKILL");
+      if (mode === "guardian-crash") process.kill(meta.guard, "SIGKILL");
+      if (mode === "normal" || mode.endsWith("crash")) await bounded(closed);
+      if (mode.endsWith("crash"))
+        await expect(terminateProcessTree(owned.child, owned.ownership)).rejects.toMatchObject({
+          reason: "linux_owner_unconfirmed",
+        });
+      else await terminateProcessTree(owned.child, owned.ownership);
+      const result = await bounded(closed);
+      if (mode === "normal") expect(result.code).toBe(0);
+      for (let i = 0; i < 100 && ((await live(meta.root)) || (await live(meta.helper))); i++) await delay(10);
+      expect(await live(meta.root)).toBe(false);
+      expect(await live(meta.helper)).toBe(false);
+      expect(await live(sentinel.pid!)).toBe(true);
+      // Reusing the completed ownership object cannot acquire numeric signal authority.
+      await terminateProcessTree(owned.child, owned.ownership).catch(() => {});
+      expect(await live(sentinel.pid!)).toBe(true);
     } finally {
-      deniedReads.clear();
-      selfStatus.value = undefined;
-      lines.close();
-      if (ownedGroupId !== undefined) {
-        try {
-          process.kill(-ownedGroupId, "SIGKILL");
-        } catch {
-          // The exact process group belongs to this fixture and may already be gone.
-        }
-      }
-      if (helperPid !== undefined) {
-        try {
-          process.kill(helperPid, "SIGKILL");
-        } catch {
-          // The exact helper PID belongs to this fixture and may already be reaped.
-        }
-      }
-      if (supervisor.exitCode === null && supervisor.signalCode === null) supervisor.kill("SIGKILL");
+      await terminateProcessTree(owned.child, owned.ownership).catch(() => {});
+      // This is the still-owned direct wrapper, never a remembered numeric group.
+      if (owned.child.exitCode === null && owned.child.signalCode === null) owned.child.kill("SIGKILL");
+      await bounded(closed);
+      sentinel.kill("SIGKILL");
+      await rm(root, { recursive: true, force: true });
     }
   },
-  8_000,
+  10000,
 );
-
-async function linuxProcessState(pid: number): Promise<string> {
-  // Independent observation must not use the injected product read failures.
-  const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
-  const stat = await actual.readFile(`/proc/${pid}/stat`, "utf8");
-  const commandEnd = stat.lastIndexOf(") ");
-  if (commandEnd < 0) throw new Error("Unexpected /proc stat format.");
-  return stat.slice(commandEnd + 2).split(" ")[0]!;
-}

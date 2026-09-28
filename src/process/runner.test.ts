@@ -1,165 +1,85 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
-
-vi.mock("node:child_process", () => ({ spawn: spawnMock }));
-
-import { captureProcessTreeOwnership, spawnOwnedMachineProcess, terminateProcessTree } from "./runner.js";
-
+import { afterEach, expect, it, vi } from "vitest";
+import { terminateProcessTree } from "./runner.js";
+afterEach(() => vi.useRealTimers());
 class FakeChild extends EventEmitter {
-  readonly pid = 43_210;
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
-  killed = false;
-  readonly kill = vi.fn(() => {
-    this.killed = true;
-    return true;
-  });
+  readonly kill = vi.fn(() => true);
 }
-
-function mockPosixGroupGone() {
-  return vi.spyOn(process, "kill").mockImplementation((_pid, signal) => {
-    if (signal === 0) {
-      throw Object.assign(new Error("gone"), { code: "ESRCH" });
-    }
-    return true;
-  });
-}
-
-function mockTaskkillSuccess(): void {
-  spawnMock.mockImplementation(() => {
-    const killer = new EventEmitter() as EventEmitter & {
-      exitCode: number | null;
-      signalCode: NodeJS.Signals | null;
-      kill: () => boolean;
-    };
-    killer.exitCode = null;
-    killer.signalCode = null;
-    killer.kill = vi.fn(() => true);
-    queueMicrotask(() => {
-      killer.exitCode = 0;
-      killer.emit("close", 0);
-    });
-    return killer;
-  });
-}
-
-describe("process-tree termination", () => {
-  beforeEach(() => spawnMock.mockReset());
-
-  it("launches the Machine process behind the platform-owned boundary", () => {
-    const child = new FakeChild();
-    spawnMock.mockReturnValue(child);
-    const binaryPath = process.platform === "win32" ? "C:\\DocWen\\DocWenCLI.exe" : "/opt/docwen/DocWenCLI";
-    const launched = spawnOwnedMachineProcess(binaryPath, {
-      cwd: process.platform === "win32" ? "C:\\DocWen" : "/opt/docwen",
-      env: { DOCWEN_DATA_DIR: "profile" },
-      shell: false,
-      windowsHide: true,
-    });
-
-    expect(launched.child).toBe(child);
-    if (process.platform === "win32") {
-      expect(launched.ownership).toEqual({ kind: "windows-job-wrapper" });
-      expect(spawnMock).toHaveBeenCalledWith(
-        expect.stringMatching(/[\\/]native[\\/]windows-x64\.exe$/iu),
-        [],
-        expect.objectContaining({
-          detached: false,
-          env: expect.objectContaining({
-            DOCWEN_DATA_DIR: "profile",
-            OPENCLAW_DOCWEN_JOB_TARGET: binaryPath,
-          }),
-          stdio: ["pipe", "pipe", "pipe"],
-        }),
-      );
-    } else {
-      expect(launched.ownership).toEqual({ kind: "posix-process-group", processGroupId: 43_210 });
-      expect(spawnMock).toHaveBeenCalledWith(
-        binaryPath,
-        ["serve", "--stdio"],
-        expect.objectContaining({ detached: true, stdio: ["pipe", "pipe", "pipe"] }),
-      );
-    }
-  });
-
-  it("uses the platform tree primitive for a live generic owned child", async () => {
-    const child = new FakeChild();
-    const processKill = process.platform === "win32" ? undefined : mockPosixGroupGone();
-    if (process.platform === "win32") mockTaskkillSuccess();
-
-    try {
-      await terminateProcessTree(child as unknown as ChildProcess);
-      if (process.platform === "win32") {
-        expect(spawnMock).toHaveBeenCalledWith(
-          "taskkill.exe",
-          ["/PID", "43210", "/T", "/F"],
-          expect.objectContaining({ shell: false, windowsHide: true, stdio: "ignore" }),
-        );
-      } else {
-        expect(processKill).toHaveBeenCalledWith(-43_210, "SIGKILL");
-      }
-      expect(child.kill).not.toHaveBeenCalled();
-    } finally {
-      processKill?.mockRestore();
-    }
-  });
-
-  it("does not mistake a sent signal for confirmed generic process-tree exit", async () => {
-    const child = new FakeChild();
-    child.killed = true;
-    const processKill = process.platform === "win32" ? undefined : mockPosixGroupGone();
-    if (process.platform === "win32") mockTaskkillSuccess();
-
-    try {
-      await terminateProcessTree(child as unknown as ChildProcess);
-      if (process.platform === "win32") expect(spawnMock).toHaveBeenCalledTimes(1);
-      else expect(processKill).toHaveBeenCalledWith(-43_210, "SIGKILL");
-    } finally {
-      processKill?.mockRestore();
-    }
-  });
-
-  it("kills the Windows job controller even after a previous signal was sent", async () => {
-    const child = new FakeChild();
-    child.killed = true;
-    await terminateProcessTree(child as unknown as ChildProcess, { kind: "windows-job-wrapper" });
-    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
-  });
-
-  it("does nothing after an exited child when no captured ownership remains", async () => {
-    const child = new FakeChild();
-    child.exitCode = 0;
-    await terminateProcessTree(child as unknown as ChildProcess);
-    expect(spawnMock).not.toHaveBeenCalled();
+const asChild = (child: FakeChild) => child as unknown as ChildProcess;
+it("never derives signal authority from an unowned numeric PID", async () => {
+  const child = new FakeChild();
+  const kill = vi.spyOn(process, "kill");
+  try {
+    await terminateProcessTree(asChild(child));
+    expect(kill).not.toHaveBeenCalled();
     expect(child.kill).not.toHaveBeenCalled();
+  } finally {
+    kill.mockRestore();
+  }
+});
+it("waits for the owned completion even after the controlling child exits", async () => {
+  const child = new FakeChild();
+  child.exitCode = 0;
+  let complete!: () => void;
+  const completion = new Promise<void>((resolve) => {
+    complete = resolve;
   });
-
-  it("retains captured generic ownership after safe direct-child exit", async () => {
-    const child = new FakeChild();
-    const ownership = captureProcessTreeOwnership(
-      child as unknown as ChildProcess,
-      process.platform !== "win32",
-    )!;
-    child.exitCode = 0;
-
-    if (process.platform === "win32") {
-      await expect(terminateProcessTree(child as unknown as ChildProcess, ownership)).rejects.toMatchObject({
-        reason: "windows_root_exited",
-      });
-      expect(spawnMock).not.toHaveBeenCalled();
-      return;
-    }
-
-    const processKill = mockPosixGroupGone();
-    try {
-      await terminateProcessTree(child as unknown as ChildProcess, ownership);
-      expect(processKill).toHaveBeenCalledWith(-43_210, "SIGKILL");
-    } finally {
-      processKill.mockRestore();
-    }
+  const stop = vi.fn();
+  let settled = false;
+  const pending = terminateProcessTree(asChild(child), { kind: "linux-supervisor", completion, stop }).then(
+    () => {
+      settled = true;
+    },
+  );
+  await Promise.resolve();
+  expect(stop).toHaveBeenCalledTimes(1);
+  expect(settled).toBe(false);
+  complete();
+  await pending;
+  expect(settled).toBe(true);
+  expect(child.kill).not.toHaveBeenCalled();
+});
+it("reports rejected native cleanup instead of substituting a PID signal", async () => {
+  const child = new FakeChild();
+  await expect(
+    terminateProcessTree(asChild(child), {
+      kind: "linux-supervisor",
+      completion: Promise.reject(new Error("unconfirmed")),
+      stop: vi.fn(),
+    }),
+  ).rejects.toMatchObject({ reason: "linux_owner_unconfirmed" });
+  expect(child.kill).not.toHaveBeenCalled();
+});
+it("bounds an owner that never confirms completion", async () => {
+  vi.useFakeTimers();
+  const child = new FakeChild();
+  const check = expect(
+    terminateProcessTree(asChild(child), {
+      kind: "linux-supervisor",
+      completion: new Promise(() => {}),
+      stop: vi.fn(),
+    }),
+  ).rejects.toMatchObject({ reason: "linux_owner_unconfirmed" });
+  await vi.advanceTimersByTimeAsync(2500);
+  await check;
+  expect(child.kill).not.toHaveBeenCalled();
+});
+it("kills the live Windows job controller and leaves an exited one alone", async () => {
+  const child = new FakeChild();
+  await terminateProcessTree(asChild(child), { kind: "windows-job-wrapper" });
+  expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+  child.kill.mockClear();
+  child.exitCode = 0;
+  await terminateProcessTree(asChild(child), { kind: "windows-job-wrapper" });
+  expect(child.kill).not.toHaveBeenCalled();
+});
+it("does not claim Windows cleanup when the controller cannot be killed", async () => {
+  const child = new FakeChild();
+  child.kill.mockReturnValue(false);
+  await expect(terminateProcessTree(asChild(child), { kind: "windows-job-wrapper" })).rejects.toMatchObject({
+    reason: "windows_wrapper_kill_failed",
   });
 });

@@ -25,12 +25,10 @@ vi.mock("node:child_process", async (original) => {
     ...actual,
     spawn(binary: string, args: string[], options: ChildProcessModule.SpawnOptions) {
       const isPosixMachine =
-        process.platform !== "win32" && binary === process.execPath && args[0] === "serve";
+        process.platform === "linux" && /[\\/]docwen-owner-[^\\/]+[\\/]owner$/u.test(binary);
       const isWindowsMachine =
         process.platform === "win32" && /[\\/]native[\\/]windows-x64\.exe$/iu.test(binary);
-      const child = isPosixMachine
-        ? actual.spawn(binary, [state.script], options)
-        : actual.spawn(binary, args, options);
+      const child = actual.spawn(binary, args, options);
       if (isPosixMachine || isWindowsMachine) {
         state.child = child;
         state.closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
@@ -276,7 +274,8 @@ async function setup(mode: string): Promise<void> {
       state.binary,
     );
   } else {
-    state.binary = process.execPath;
+    state.binary = join(root, "DocWenCLI");
+    await writeFile(state.binary, `#!${process.execPath}\n${producer}`, { mode: 0o700 });
   }
 }
 
@@ -512,14 +511,7 @@ describe("Machine transport and owned process lifecycle with controlled real sub
     const helper = await waitForEvent("helper_started");
     const helperPid = helper.helperPid as number;
 
-    if (process.platform === "win32") {
-      await expect(operation).rejects.toMatchObject({ code: "docwen_machine_protocol_error" });
-    } else {
-      await expect(operation).rejects.toMatchObject({
-        code: "docwen_machine_timeout",
-        details: { timeoutMs: 200 },
-      });
-    }
+    await expect(operation).rejects.toMatchObject({ code: "docwen_machine_protocol_error" });
     expect(performance.now() - startedAt).toBeLessThan(5_000);
     await waitForPidExit(helperPid);
     await state.closed;
@@ -560,9 +552,9 @@ describe("Machine transport and owned process lifecycle with controlled real sub
       const helper = await waitForEvent("helper_started");
       const helperPid = helper.helperPid as number;
       expect(state.child).toBeDefined();
-      state.child!.kill("SIGTERM");
+      process.kill(helper.pid as number, "SIGTERM");
       await waitForEvent("sigterm_seen");
-      expect(state.child!.killed).toBe(true);
+      expect(state.child!.killed).toBe(false);
       expect(state.child!.exitCode).toBeNull();
 
       await expect(operation).rejects.toMatchObject({

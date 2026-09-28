@@ -26,12 +26,10 @@ vi.mock("node:child_process", async (original) => {
     ...actual,
     spawn(binary: string, args: string[], options: ChildProcessModule.SpawnOptions) {
       const isPosixMachine =
-        process.platform !== "win32" && binary === process.execPath && args[0] === "serve";
+        process.platform === "linux" && /[\\/]docwen-owner-[^\\/]+[\\/]owner$/u.test(binary);
       const isWindowsMachine =
         process.platform === "win32" && /[\\/]native[\\/]windows-x64\.exe$/iu.test(binary);
-      const child = isPosixMachine
-        ? actual.spawn(binary, [state.script], options)
-        : actual.spawn(binary, args, options);
+      const child = actual.spawn(binary, args, options);
       if (isPosixMachine || isWindowsMachine) {
         state.child = child;
         state.closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
@@ -170,7 +168,8 @@ async function setup(phase: string): Promise<string> {
       await copyFile(process.execPath, state.binary);
     }
   } else {
-    state.binary = process.execPath;
+    state.binary = join(root, "DocWenCLI");
+    await writeFile(state.binary, `#!${process.execPath}\n${producer}`, { mode: 0o700 });
   }
   return root;
 }

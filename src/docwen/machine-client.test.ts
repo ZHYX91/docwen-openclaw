@@ -44,7 +44,7 @@ vi.mock("../process/runner.js", async (original) => {
         ownership:
           process.platform === "win32"
             ? ({ kind: "windows-job-wrapper" } as const)
-            : ({ kind: "posix-process-group", processGroupId: child.pid } as const),
+            : ({ kind: "linux-supervisor", completion: Promise.resolve(), stop: () => {} } as const),
       };
     },
     terminateProcessTree: terminateProcessTreeMock,

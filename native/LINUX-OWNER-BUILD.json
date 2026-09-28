@@ -1,0 +1,20 @@
+{
+  "sourceSha256": "497bc7b38debb3ba2cb3ceb1fde3175efb22f8d20f46b30fa42251f4c7f93258",
+  "binarySha256": "6cdaabc6cfd844cbda6dcfee284e91b6320417830e1afae4366300a109125c51",
+  "binaryBytes": 17144,
+  "platform": "linux",
+  "arch": "x64",
+  "compiler": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+  "args": [
+    "-std=c11",
+    "-O2",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-fno-ident",
+    "-Wl,--build-id=none",
+    "/mnt/d/Projects/DocWen-Workspace/repos/docwen-openclaw/native/linux-owner.c",
+    "-o",
+    "/mnt/d/Projects/DocWen-Workspace/.workspace/temp/oc-release-IVfbVJ/linux-owner-x64"
+  ]
+}

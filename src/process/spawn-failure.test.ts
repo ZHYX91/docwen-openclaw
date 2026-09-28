@@ -32,8 +32,12 @@ describe.skipIf(process.platform !== "linux")("real POSIX spawn error handoff", 
       });
       const outcome = new Promise<Error>((resolve) => child.once("error", resolve));
       const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
-      expect(ownership).toBeUndefined();
-      await expect(outcome).resolves.toMatchObject({ code: "ENOENT" });
+      expect(ownership?.kind).toBe("linux-supervisor");
+      if (failure === "cwd") await expect(outcome).resolves.toMatchObject({ code: "ENOENT" });
+      else
+        await expect(outcome).resolves.toMatchObject({
+          message: "Linux Machine owner could not start the configured executable.",
+        });
       await closed;
     },
   );

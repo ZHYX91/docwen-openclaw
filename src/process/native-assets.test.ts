@@ -2,8 +2,30 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import { describe, expect, it } from "vitest";
+import { LINUX_OWNER_SHA256 } from "./linux-owner.js";
 
 describe("native process ownership assets", () => {
+  it("binds the Linux lifetime owner to reviewed source, payload and runtime digest", async () => {
+    const record = JSON.parse(await readFile("native/LINUX-OWNER-BUILD.json", "utf8")) as {
+      sourceSha256: string;
+      binarySha256: string;
+      binaryBytes: number;
+      platform: string;
+      arch: string;
+    };
+    const source = await readFile("native/linux-owner.c");
+    const binary = await readFile("native/linux-owner-x64");
+    expect(record).toMatchObject({
+      platform: "linux",
+      arch: "x64",
+      sourceSha256: sha256(source),
+      binarySha256: sha256(binary),
+      binaryBytes: binary.length,
+    });
+    expect(sha256(binary)).toBe(LINUX_OWNER_SHA256);
+    expect(binary.subarray(0, 6)).toEqual(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]));
+    expect(binary.readUInt16LE(18)).toBe(62);
+  });
   it("binds the checked-in Windows controller to its reviewed source and provenance", async () => {
     const record = JSON.parse(await readFile("native/WINDOWS-BUILD.json", "utf8")) as {
       sourceSha256: string;
