@@ -62,7 +62,11 @@ function handle(message) {
     case 'initialize': reply({protocol:{name:'docwen.machine',major:2,minor:0},server:{name:'DocWen',version:'0.12.1'},artifact_bundle_schema:'docwen.artifact_bundle.v3'}); break;
     case 'capability/list': reply({capabilities:[{capability_id:'transform.markdown.heading_numbering',operation:'transform',input_shape:{slots:[{role:'source',kind:'document',media_types:['text/markdown'],min_items:1,max_items:1}],undeclared_roles:'reject'},output_media_types:['text/markdown'],output_shape:{cardinality:'one',artifact_kinds:['document'],relation_types:[],atomic_bundle:true},options_schema:{},availability:'available',dependencies:[],limitations:[]}]}); break;
     case 'task/plan': reply({plan_id:'plan.1'}); break;
-    case 'task/execute': reply({task_id:'task.1',state:'accepted'}); if(phase==='running') notify('task/progress'); break;
+    case 'task/execute':
+      if(phase==='stdin_closed') { process.stdin.destroy(); setInterval(()=>{},1000); }
+      reply({task_id:'task.1',state:'accepted'});
+      if(phase==='running' || phase==='stdin_closed') notify('task/progress');
+      break;
     case 'task/cancel':
       if(phase==='ignore') break;
       if(phase==='disconnect') { process.exit(0); break; }
@@ -95,7 +99,7 @@ afterEach(async () => {
 });
 
 describe("Gateway tool adapter cancellation with a controlled real subprocess", () => {
-  it.each(["accepted", "running", "ack_only", "ignore", "disconnect"])(
+  it.each(["accepted", "running", "ack_only", "ignore", "disconnect", "stdin_closed"])(
     "cancels exactly at %s without publication or retained task work",
     async (phase) => {
       const root = await mkdtemp(join(tmpdir(), "docwen-cancel-boundary-"));
@@ -144,12 +148,14 @@ describe("Gateway tool adapter cancellation with a controlled real subprocess", 
         .split("\n")
         .map((line) => JSON.parse(line));
       const requests = trace.filter((row) => row.direction === "in").map((row) => row.message);
-      expect(requests.filter((request) => request.method === "task/cancel")).toHaveLength(1);
+      expect(requests.filter((request) => request.method === "task/cancel")).toHaveLength(
+        phase === "stdin_closed" ? 0 : 1,
+      );
       expect(requests.filter((request) => request.method === "task/execute")).toHaveLength(1);
       const progress = trace.filter(
         (row) => row.direction === "out" && row.message.method === "task/progress",
       );
-      expect(progress).toHaveLength(phase === "running" ? 1 : 0);
+      expect(progress).toHaveLength(phase === "running" || phase === "stdin_closed" ? 1 : 0);
       const staging = requests.find((request) => request.method === "task/plan").params.output.staging_root
         .path;
       await expect(stat(dirname(staging))).rejects.toMatchObject({ code: "ENOENT" });
