@@ -7,11 +7,7 @@ const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
 
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 
-import {
-  captureProcessTreeOwnership,
-  spawnOwnedMachineProcess,
-  terminateProcessTree,
-} from "./runner.js";
+import { captureProcessTreeOwnership, spawnOwnedMachineProcess, terminateProcessTree } from "./runner.js";
 
 class FakeChild extends EventEmitter {
   readonly pid = 43_210;
@@ -82,17 +78,11 @@ describe("process-tree termination", () => {
         }),
       );
     } else {
-      expect(launched.ownership).toEqual({
-        kind: "posix-process-group",
-        processGroupId: 43_210,
-      });
+      expect(launched.ownership).toEqual({ kind: "posix-process-group", processGroupId: 43_210 });
       expect(spawnMock).toHaveBeenCalledWith(
         binaryPath,
         ["serve", "--stdio"],
-        expect.objectContaining({
-          detached: true,
-          stdio: ["pipe", "pipe", "pipe"],
-        }),
+        expect.objectContaining({ detached: true, stdio: ["pipe", "pipe", "pipe"] }),
       );
     }
   });
@@ -137,9 +127,7 @@ describe("process-tree termination", () => {
   it("kills the Windows job controller even after a previous signal was sent", async () => {
     const child = new FakeChild();
     child.killed = true;
-    await terminateProcessTree(child as unknown as ChildProcess, {
-      kind: "windows-job-wrapper",
-    });
+    await terminateProcessTree(child as unknown as ChildProcess, { kind: "windows-job-wrapper" });
     expect(child.kill).toHaveBeenCalledWith("SIGKILL");
   });
 
@@ -160,9 +148,7 @@ describe("process-tree termination", () => {
     child.exitCode = 0;
 
     if (process.platform === "win32") {
-      await expect(
-        terminateProcessTree(child as unknown as ChildProcess, ownership),
-      ).rejects.toMatchObject({
+      await expect(terminateProcessTree(child as unknown as ChildProcess, ownership)).rejects.toMatchObject({
         reason: "windows_root_exited",
       });
       expect(spawnMock).not.toHaveBeenCalled();
