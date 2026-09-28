@@ -6,7 +6,12 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import * as path from "node:path";
 
-import { terminateProcessTree } from "../process/runner.js";
+import {
+  captureProcessTreeOwnership,
+  ProcessTreeTerminationError,
+  terminateProcessTree,
+  type ProcessTreeOwnership,
+} from "../process/runner.js";
 import { validateBundleFields, validateBundlePages } from "./bundle-metadata.js";
 import { encodeMachineFrame, isJsonObject, MachineFrameDecoder, type JsonObject } from "./machine-framing.js";
 
@@ -16,6 +21,8 @@ const CLIENT_NAME = "DocWen OpenClaw";
 const CLIENT_VERSION = (createRequire(import.meta.url)("../../package.json") as { version: string }).version;
 const STDERR_LIMIT_BYTES = 256 * 1024;
 const CANCELLATION_GRACE_MS = 2_000;
+const SESSION_CLOSE_GRACE_MS = 2_000;
+const SESSION_TERMINATION_SETTLE_MS = 2_000;
 const MAX_ARTIFACT_COUNT = 256;
 const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
 const MAX_ARTIFACT_BUNDLE_BYTES = 1024 * 1024 * 1024;
@@ -174,8 +181,10 @@ class MachineSession {
   private stderrBytes = 0;
   private nextRequestId = 0;
   private normalClose = false;
+  private closeSettled = false;
   private termination?: Promise<void>;
   private readonly closed: Promise<number | null>;
+  private readonly processTree: ProcessTreeOwnership | undefined;
   readonly child: ChildProcessWithoutNullStreams;
 
   constructor(binaryPath: string, locale?: string) {
@@ -191,12 +200,25 @@ class MachineSession {
     } catch (error) {
       throw localError("docwen_machine_spawn_failed", "Unable to start DocWen Machine Protocol.", error);
     }
+    this.processTree = captureProcessTreeOwnership(this.child, process.platform !== "win32");
     this.closed = new Promise((resolve) => {
-      this.child.once("close", resolve);
+      let settled = false;
+      const settle = (code: number | null): void => {
+        if (settled) return;
+        settled = true;
+        this.closeSettled = true;
+        resolve(code);
+      };
+      this.child.once("close", settle);
       this.child.once("error", (error) => {
         this.fail(localError("docwen_machine_spawn_failed", "DocWen process failed.", error));
-        resolve(null);
+        settle(null);
       });
+    });
+    this.child.stdin.on("error", (error) => {
+      if (this.normalClose) return;
+      this.fail(localError("docwen_machine_protocol_error", "DocWen stdin failed.", error));
+      void this.terminate().catch(() => undefined);
     });
     this.child.stdout.on("data", (chunk: Buffer) => {
       try {
@@ -211,7 +233,7 @@ class MachineSession {
       if (this.stderrBytes <= STDERR_LIMIT_BYTES) this.stderr.push(bytes);
       else {
         this.fail(new DocWenMachineError("docwen_machine_output_limit", "DocWen stderr exceeded its limit."));
-        void this.terminate();
+        void this.terminate().catch(() => undefined);
       }
     });
     this.child.once("close", (code) => {
@@ -267,7 +289,7 @@ class MachineSession {
       this.fail(
         new DocWenMachineError("docwen_machine_timeout", "DocWen Machine query timed out.", { timeoutMs }),
       );
-      void this.terminate();
+      void this.terminate().catch(() => undefined);
     }, timeoutMs);
     try {
       return await this.rpc(method, params);
@@ -320,8 +342,10 @@ class MachineSession {
 
   async close(): Promise<void> {
     this.normalClose = true;
-    this.child.stdin.end();
-    const code = await this.closed;
+    if (!this.child.stdin.destroyed) this.child.stdin.end();
+    const graceful = await settleWithin(this.closed, SESSION_CLOSE_GRACE_MS);
+    if (!graceful.settled) await this.terminate();
+    const code = graceful.settled ? graceful.value : await this.closed;
     if (this.queue.drain().length > 0 || this.deferred.length > 0) {
       throw protocolError("unexpected messages after the operation completed");
     }
@@ -342,8 +366,24 @@ class MachineSession {
   terminate(): Promise<void> {
     if (this.termination) return this.termination;
     this.normalClose = true;
-    this.child.stdin.destroy();
-    this.termination = terminateProcessTree(this.child).catch(() => undefined);
+    if (!this.child.stdin.destroyed) this.child.stdin.destroy();
+    this.termination = (async () => {
+      if (this.closeSettled) return;
+      try {
+        await terminateProcessTree(this.child, this.processTree);
+      } catch (error) {
+        throw cleanupError(error);
+      }
+      if (this.closeSettled) return;
+      const settled = await settleWithin(this.closed, SESSION_TERMINATION_SETTLE_MS);
+      if (!settled.settled) {
+        throw new DocWenMachineError(
+          "docwen_machine_cleanup_unconfirmed",
+          "DocWen process cleanup could not be confirmed.",
+          { platform: process.platform, reason: "child_close_timeout" },
+        );
+      }
+    })();
     return this.termination;
   }
 
@@ -464,7 +504,7 @@ async function withSession<T>(
         timeoutMs: options.timeoutMs,
       }),
     );
-    void session.terminate();
+    void session.terminate().catch(() => undefined);
   }, options.timeoutMs);
   const onAbort = (): void => {
     if (abortHandled) return;
@@ -476,16 +516,16 @@ async function withSession<T>(
         session.requestCancellation(taskId);
       } catch {
         session.fail(failure);
-        void session.terminate();
+        void session.terminate().catch(() => undefined);
         return;
       }
       cancellationTimer = setTimeout(() => {
         session.fail(failure);
-        void session.terminate();
+        void session.terminate().catch(() => undefined);
       }, CANCELLATION_GRACE_MS);
     } else {
       session.fail(failure);
-      void session.terminate();
+      void session.terminate().catch(() => undefined);
     }
   };
   options.signal?.addEventListener("abort", onAbort, { once: true });
@@ -912,6 +952,31 @@ function outputLimitError(message: string, details: JsonObject): DocWenMachineEr
 
 function localError(code: string, message: string, cause: unknown): DocWenMachineError {
   return new DocWenMachineError(code, message, { cause: errorMessage(cause) });
+}
+
+function cleanupError(error: unknown): DocWenMachineError {
+  if (error instanceof DocWenMachineError && error.code === "docwen_machine_cleanup_unconfirmed") {
+    return error;
+  }
+  const reason = error instanceof ProcessTreeTerminationError ? error.reason : "unknown";
+  return new DocWenMachineError(
+    "docwen_machine_cleanup_unconfirmed",
+    "DocWen process cleanup could not be confirmed.",
+    { platform: process.platform, reason },
+  );
+}
+
+async function settleWithin<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<{ settled: true; value: T } | { settled: false }> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ settled: false }), timeoutMs);
+    promise.then((value) => {
+      clearTimeout(timer);
+      resolve({ settled: true, value });
+    });
+  });
 }
 
 function errorMessage(error: unknown): string {
