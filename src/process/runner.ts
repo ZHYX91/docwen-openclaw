@@ -68,9 +68,7 @@ async function terminateWindowsTree(child: ChildProcess, rootPid: number): Promi
     windowsHide: true,
     stdio: "ignore",
   });
-  let outcome:
-    | { kind: "close"; code: number | null }
-    | { kind: "timeout" };
+  let outcome: { kind: "close"; code: number | null } | { kind: "timeout" };
   try {
     outcome = await Promise.race([
       once(killer, "close").then(([code]) => ({ kind: "close" as const, code: code as number | null })),

@@ -99,8 +99,10 @@ describe("process-tree termination", () => {
     expect(child.kill).not.toHaveBeenCalled();
   });
 
-  it("retains captured ownership after the direct child exits where the platform can do so safely", async () => {
-    const child = new FakeChild();
+  it(
+    "retains captured ownership after the direct child exits where the platform can do so safely",
+    async () => {
+      const child = new FakeChild();
     const ownership = captureProcessTreeOwnership(
       child as unknown as ChildProcess,
       process.platform !== "win32",
@@ -121,8 +123,9 @@ describe("process-tree termination", () => {
     try {
       await terminateProcessTree(child as unknown as ChildProcess, ownership);
       expect(processKill).toHaveBeenCalledWith(-43_210, "SIGKILL");
-    } finally {
-      processKill.mockRestore();
-    }
-  });
+      } finally {
+        processKill.mockRestore();
+      }
+    },
+  );
 });
