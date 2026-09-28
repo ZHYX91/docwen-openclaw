@@ -148,7 +148,9 @@ describe("process-tree termination", () => {
     child.exitCode = 0;
 
     if (process.platform === "win32") {
-      await expect(terminateProcessTree(child as unknown as ChildProcess, ownership)).rejects.toMatchObject({
+      await expect(
+        terminateProcessTree(child as unknown as ChildProcess, ownership),
+      ).rejects.toMatchObject({
         reason: "windows_root_exited",
       });
       expect(spawnMock).not.toHaveBeenCalled();
