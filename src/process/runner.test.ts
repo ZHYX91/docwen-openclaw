@@ -103,26 +103,26 @@ describe("process-tree termination", () => {
     "retains captured ownership after the direct child exits where the platform can do so safely",
     async () => {
       const child = new FakeChild();
-    const ownership = captureProcessTreeOwnership(
-      child as unknown as ChildProcess,
-      process.platform !== "win32",
-    )!;
-    child.exitCode = 0;
+      const ownership = captureProcessTreeOwnership(
+        child as unknown as ChildProcess,
+        process.platform !== "win32",
+      )!;
+      child.exitCode = 0;
 
-    if (process.platform === "win32") {
-      await expect(
-        terminateProcessTree(child as unknown as ChildProcess, ownership),
-      ).rejects.toMatchObject<Partial<ProcessTreeTerminationError>>({
-        reason: "windows_root_exited",
-      });
-      expect(spawnMock).not.toHaveBeenCalled();
-      return;
-    }
+      if (process.platform === "win32") {
+        await expect(
+          terminateProcessTree(child as unknown as ChildProcess, ownership),
+        ).rejects.toMatchObject<Partial<ProcessTreeTerminationError>>({
+          reason: "windows_root_exited",
+        });
+        expect(spawnMock).not.toHaveBeenCalled();
+        return;
+      }
 
-    const processKill = mockPosixGroupGone();
-    try {
-      await terminateProcessTree(child as unknown as ChildProcess, ownership);
-      expect(processKill).toHaveBeenCalledWith(-43_210, "SIGKILL");
+      const processKill = mockPosixGroupGone();
+      try {
+        await terminateProcessTree(child as unknown as ChildProcess, ownership);
+        expect(processKill).toHaveBeenCalledWith(-43_210, "SIGKILL");
       } finally {
         processKill.mockRestore();
       }
