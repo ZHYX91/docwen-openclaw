@@ -139,7 +139,10 @@ describe.skipIf(process.platform !== "linux")("native image cleanup failures", (
   ] as const)("keeps %s facts after %s without a second child error", async (phase, fault) => {
     await inject(phase);
     const { child, ownership } = spawnLinuxOwnedMachine(process.execPath, {
-      cwd: tmpdir(), env: process.env, shell: false, windowsHide: true,
+      cwd: tmpdir(),
+      env: process.env,
+      shell: false,
+      windowsHide: true,
     });
     const control = child.stdio[3] as Duplex;
     const end = control.end.bind(control);
