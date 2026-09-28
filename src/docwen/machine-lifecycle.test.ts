@@ -38,17 +38,23 @@ const producer = String.raw`
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const mode = process.argv[2], trace = process.argv[3];
-let buffer = Buffer.alloc(0);
+let buffer = Buffer.alloc(0), cooperativeHelper;
 function record(event, extra = {}) {
   fs.appendFileSync(trace, JSON.stringify({event, pid: process.pid, ...extra}) + '\n');
 }
 function hold() { setInterval(() => {}, 1000); }
-function spawnHelper() {
-  const helper = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-    stdio: ['ignore', 'inherit', 'inherit'],
-    windowsHide: true,
-  });
-  record('helper_started', { helperPid: helper.pid });
+function spawnHelper(cooperative = false) {
+  const helper = spawn(
+    process.execPath,
+    ['-e', cooperative
+      ? "process.stdin.resume(); process.stdin.on('end',()=>process.exit(0))"
+      : 'setInterval(() => {}, 1000)'],
+    {
+      stdio: [cooperative ? 'pipe' : 'ignore', 'inherit', 'inherit'],
+      windowsHide: true,
+    },
+  );
+  record('helper_started', { helperPid: helper.pid, cooperative });
   return helper;
 }
 function send(message) {
@@ -58,22 +64,27 @@ function send(message) {
 function reply(message, result) {
   send({ jsonrpc: '2.0', id: message.id, result });
 }
-function closeInput() {
-  process.stdin.destroy();
-  record('stdin_closed');
+function closeInput(afterClose) {
   hold();
+  process.stdin.once('close', () => {
+    record('stdin_closed');
+    afterClose();
+  });
+  process.stdin.destroy();
 }
 function handle(message) {
   record('request', { method: message.method });
   switch (message.method) {
-    case 'initialize':
-      if (mode === 'stdin_query') closeInput();
-      reply(message, {
+    case 'initialize': {
+      const initialized = () => reply(message, {
         protocol: { name: 'docwen.machine', major: 2, minor: 0 },
         server: { name: 'DocWen', version: '0.12.1' },
         artifact_bundle_schema: 'docwen.artifact_bundle.v3'
       });
+      if (mode === 'stdin_query') closeInput(initialized);
+      else initialized();
       break;
+    }
     case 'health/check':
       record('health_seen');
       if (mode === 'rpc_descendant') {
@@ -87,11 +98,12 @@ function handle(message) {
         hold();
         return;
       }
+      if (mode === 'normal_descendant') cooperativeHelper = spawnHelper(true);
       reply(message, { all_ok: true, checks: [] });
       break;
     case 'task/plan':
-      if (mode === 'stdin_task') closeInput();
-      reply(message, { plan_id: 'plan.1' });
+      if (mode === 'stdin_task') closeInput(() => reply(message, { plan_id: 'plan.1' }));
+      else reply(message, { plan_id: 'plan.1' });
       break;
     default:
       throw new Error('Unexpected request: ' + message.method);
@@ -116,6 +128,15 @@ process.stdin.on('end', () => {
   if (mode === 'close_descendant') {
     spawnHelper();
     record('root_exit');
+    process.exit(0);
+  }
+  if (mode === 'normal_descendant' && cooperativeHelper) {
+    cooperativeHelper.once('close', () => {
+      record('helper_closed');
+      process.exit(0);
+    });
+    cooperativeHelper.stdin.end();
+    return;
   }
   process.exit(0);
 });
@@ -247,6 +268,22 @@ describe("Machine transport and owned process lifecycle with controlled real sub
     ).resolves.toMatchObject({ result: { all_ok: true } });
     await state.closed;
     expect((await readTrace()).some((row) => row.event === "helper_started")).toBe(false);
+  });
+
+  it("settles a cooperative parent/descendant tree normally", async () => {
+    await setup("normal_descendant");
+    await expect(
+      runDocWenMachineQuery({
+        binaryPath: process.execPath,
+        method: "health/check",
+        params: {},
+        timeoutMs: 3_000,
+      }),
+    ).resolves.toMatchObject({ result: { all_ok: true } });
+    const helper = await waitForEvent("helper_started");
+    await waitForPidExit(helper.helperPid as number);
+    await state.closed;
+    expect((await readTrace()).some((row) => row.event === "helper_closed")).toBe(true);
   });
 
   it("turns an asynchronous broken stdin during a query into a bounded session failure", async () => {
