@@ -69,8 +69,10 @@ function handle(message) {
       };
       if(phase==='stdin_closed') {
         setInterval(()=>{},1000);
-        process.stdin.once('close', accepted);
-        process.stdin.destroy();
+        process.stdin.pause();
+        process.stdin.on('error',()=>{});
+        fs.closeSync(0);
+        accepted();
       } else accepted();
       break;
     }

@@ -66,11 +66,11 @@ function reply(message, result) {
 }
 function closeInput(afterClose) {
   hold();
-  process.stdin.once('close', () => {
-    record('stdin_closed');
-    afterClose();
-  });
-  process.stdin.destroy();
+  process.stdin.pause();
+  process.stdin.on('error', () => {});
+  fs.closeSync(0);
+  record('stdin_closed');
+  afterClose();
 }
 function handle(message) {
   record('request', { method: message.method });

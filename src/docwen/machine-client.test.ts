@@ -13,7 +13,9 @@ import { encodeMachineFrame, MachineFrameDecoder, type JsonObject } from "./mach
 
 const { spawnMock, terminateProcessTreeMock, serverState } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
-  terminateProcessTreeMock: vi.fn(async () => undefined),
+  terminateProcessTreeMock: vi.fn(async (child: { kill(): boolean }) => {
+    child.kill();
+  }),
   serverState: {
     behavior: "normal",
     cancelRequests: 0,
@@ -309,7 +311,9 @@ describe("DocWen Machine Protocol client", () => {
   beforeEach(() => {
     spawnMock.mockReset();
     terminateProcessTreeMock.mockClear();
-    terminateProcessTreeMock.mockResolvedValue(undefined);
+    terminateProcessTreeMock.mockImplementation(async (child) => {
+      child.kill();
+    });
     serverState.behavior = "normal";
     serverState.cancelRequests = 0;
     serverState.corruptHash = false;
