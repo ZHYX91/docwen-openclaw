@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { spawnLinuxOwnedMachine, type LinuxOwner } from "./linux-owner.js";
+import { linuxOwnerErrorDetails, spawnLinuxOwnedMachine, type LinuxOwner } from "./linux-owner.js";
 
 // The native owner has a two-second reap budget; allow delivery of its result.
 const TERMINATION_TIMEOUT_MS = 2_500;
@@ -11,6 +11,7 @@ export class ProcessTreeTerminationError extends Error {
   constructor(
     readonly reason: ProcessTreeTerminationReason,
     message: string,
+    readonly diagnostics?: Record<string, string>,
   ) {
     super(message);
     this.name = "ProcessTreeTerminationError";
@@ -47,10 +48,11 @@ export async function terminateProcessTree(
           timer = setTimeout(() => reject(new Error("cleanup timeout")), TERMINATION_TIMEOUT_MS);
         }),
       ]);
-    } catch {
+    } catch (error) {
       throw new ProcessTreeTerminationError(
         "linux_owner_unconfirmed",
         "Linux owned process cleanup could not be confirmed.",
+        linuxOwnerErrorDetails(error),
       );
     } finally {
       if (timer !== undefined) clearTimeout(timer);

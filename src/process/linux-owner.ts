@@ -17,6 +17,15 @@ import type { Duplex } from "node:stream";
 export const LINUX_OWNER_SHA256 = "6cdaabc6cfd844cbda6dcfee284e91b6320417830e1afae4366300a109125c51";
 export type LinuxOwner = Readonly<{ kind: "linux-supervisor"; completion: Promise<void>; stop: () => void }>;
 
+const imageFailures = new WeakMap<Error, Record<string, string>>();
+export function linuxOwnerErrorDetails(error: unknown): Record<string, string> | undefined {
+  return error instanceof Error ? imageFailures.get(error) : undefined;
+}
+function systemCode(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return typeof code === "string" && /^E[A-Z0-9]{1,30}$/u.test(code) ? code : "UNKNOWN";
+}
+
 export function spawnLinuxOwnedMachine(
   binaryPath: string,
   options: { cwd: string; env: NodeJS.ProcessEnv; shell: false; windowsHide: true },
@@ -32,12 +41,25 @@ export function spawnLinuxOwnedMachine(
   const executable = join(root, "owner");
   let imagePresent = false;
   let rootPresent = true;
+  let cleanupPhase = "image_unlink";
+  let imageFailure: Record<string, string> | undefined;
+  function recordImageFailure(primary: Error, cleanup: unknown): void {
+    imageFailure = {
+      cleanupObject: "owner_image",
+      cleanupPhase,
+      cleanupSystemCode: systemCode(cleanup),
+      primarySystemCode: systemCode(primary),
+    };
+    imageFailures.set(primary, imageFailure);
+  }
   function cleanImage(): void {
     if (imagePresent) {
+      cleanupPhase = "image_unlink";
       unlinkSync(executable);
       imagePresent = false;
     }
     if (rootPresent) {
+      cleanupPhase = "directory_remove";
       rmdirSync(root);
       rootPresent = false;
     }
@@ -60,9 +82,9 @@ export function spawnLinuxOwnedMachine(
     try {
       cleanImage();
     } catch (cleanup) {
-      throw new AggregateError([error, cleanup], "Linux owner preparation and cleanup failed.", {
-        cause: cleanup,
-      });
+      const primary = error instanceof Error ? error : new Error("Linux owner preparation failed.");
+      recordImageFailure(primary, cleanup);
+      throw primary;
     }
     throw error;
   }
@@ -89,6 +111,7 @@ export function spawnLinuxOwnedMachine(
     if (failed || done) return;
     failed = true;
     const error = new Error(message);
+    if (imageFailure) imageFailures.set(error, imageFailure);
     rejectCompletion(error);
     stop();
     if (emit) child.emit("error", error);
@@ -108,9 +131,12 @@ export function spawnLinuxOwnedMachine(
         ready = true;
         try {
           cleanImage();
-        } catch {
-          fail("Linux owner executable cleanup failed before Machine start.");
-          return;
+        } catch (cleanup) {
+          const error = new Error("Linux owner executable cleanup failed before Machine start.");
+          recordImageFailure(error, cleanup);
+          startupError = true;
+          stop();
+          child.emit("error", error);
         }
         if (!stopping) control.write("A");
       } else if (/^DWO1 DONE (?:[0-9]|[1-9][0-9]{1,2})$/u.test(line) && ready) {
@@ -132,13 +158,12 @@ export function spawnLinuxOwnedMachine(
     }
   });
   control.on("error", () => fail("Linux owner control channel failed."));
-  child.once("error", () => {
+  child.once("error", (error) => {
     if (startupError) return;
     try {
       cleanImage();
-    } catch {
-      fail("Linux owner failed and executable cleanup remained incomplete.", false);
-      return;
+    } catch (cleanup) {
+      recordImageFailure(error, cleanup);
     }
     if (child.pid === undefined && !ready) {
       done = true;
@@ -148,8 +173,14 @@ export function spawnLinuxOwnedMachine(
   child.once("close", () => {
     try {
       cleanImage();
-    } catch {
-      fail("Linux owner executable cleanup remained incomplete.", false);
+    } catch (cleanup) {
+      // File cleanup is independent of the native DONE/exit result. The
+      // startup error already carries this failure; never discard valid DONE.
+      if (!imageFailure) {
+        const error = new Error("Linux owner executable cleanup remained incomplete.");
+        recordImageFailure(error, cleanup);
+        child.emit("error", error);
+      }
     }
     if (!done) fail("Linux owner exited without confirmed cleanup.", false);
     control.destroy();

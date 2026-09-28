@@ -5,6 +5,7 @@ import { lstat, open, realpath, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import * as path from "node:path";
+import { linuxOwnerErrorDetails } from "../process/linux-owner.js";
 
 import {
   ProcessTreeTerminationError,
@@ -957,7 +958,8 @@ function outputLimitError(message: string, details: JsonObject): DocWenMachineEr
 }
 
 function localError(code: string, message: string, cause: unknown): DocWenMachineError {
-  return new DocWenMachineError(code, message, { cause: errorMessage(cause) });
+  const ownerDetails = linuxOwnerErrorDetails(cause);
+  return new DocWenMachineError(code, message, ownerDetails ?? { cause: errorMessage(cause) });
 }
 
 function cleanupError(error: unknown): DocWenMachineError {
@@ -968,7 +970,11 @@ function cleanupError(error: unknown): DocWenMachineError {
   return new DocWenMachineError(
     "docwen_machine_cleanup_unconfirmed",
     "DocWen process cleanup could not be confirmed.",
-    { platform: process.platform, reason },
+    {
+      platform: process.platform,
+      reason,
+      ...(error instanceof ProcessTreeTerminationError ? error.diagnostics : {}),
+    },
   );
 }
 
