@@ -133,9 +133,9 @@ static void fail(HANDLE job, HANDLE process, HANDLE thread) {
 static BOOL build_command_line(DWORD targetLength) {
   DWORD index = 0;
   if (targetLength + 16u >= MAX_COMMAND) return FALSE;
-  commandLine[index++] = L'"';
+  commandLine[index++] = L'\"';
   for (DWORD i = 0; i < targetLength; i++) {
-    if (target[i] == L'"' || target[i] == 0) return FALSE;
+    if (target[i] == L'\"' || target[i] == 0) return FALSE;
     commandLine[index++] = target[i];
   }
   commandLine[index++] = L'"';
