@@ -73,6 +73,7 @@ export const RELEASE_FILES = Object.freeze(
     "dist/tools/definitions.js",
     "openclaw-config.example.json5",
     "native/linux-x64.node",
+    "native/windows-x64.exe",
     "openclaw.plugin.json",
     "package.json",
     "skills/docwen/SKILL.md",
@@ -144,6 +145,7 @@ function verifyPackageIdentity(entries) {
     [
       "dist",
       "native/linux-x64.node",
+      "native/windows-x64.exe",
       "native/README.md",
       "openclaw.plugin.json",
       "openclaw-config.example.json5",
