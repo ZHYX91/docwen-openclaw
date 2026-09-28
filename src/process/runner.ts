@@ -18,6 +18,7 @@ export type ProcessTreeTerminationReason =
   | "taskkill_failed"
   | "taskkill_timeout"
   | "process_group_kill_failed"
+  | "process_group_state_unconfirmed"
   | "process_group_still_alive";
 
 export class ProcessTreeTerminationError extends Error {
@@ -162,42 +163,82 @@ async function terminatePosixProcessGroup(processGroupId: number): Promise<void>
 
   const deadline = Date.now() + TERMINATION_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (!(await processGroupHasLiveMember(processGroupId))) return;
+    if ((await processGroupState(processGroupId)) === "gone") return;
     await delay(TERMINATION_POLL_MS);
   }
-  if (!(await processGroupHasLiveMember(processGroupId))) return;
+  const state = await processGroupState(processGroupId);
+  if (state === "gone") return;
   throw new ProcessTreeTerminationError(
-    "process_group_still_alive",
-    "POSIX process-group cleanup did not settle within its cleanup deadline.",
+    state === "live" ? "process_group_still_alive" : "process_group_state_unconfirmed",
+    "POSIX process-group cleanup could not be confirmed within its cleanup deadline.",
   );
 }
 
-async function processGroupHasLiveMember(processGroupId: number): Promise<boolean> {
-  if (process.platform !== "linux") return processGroupExists(processGroupId);
+type GroupState = "gone" | "live" | "unconfirmed";
+
+async function processGroupState(processGroupId: number): Promise<GroupState> {
+  // ESRCH is authoritative even when unrelated procfs entries cannot be read.
+  if (!processGroupExists(processGroupId)) return "gone";
+  if (process.platform !== "linux") return "live";
 
   let entries;
   try {
     entries = await readdir("/proc", { withFileTypes: true });
   } catch {
-    return processGroupExists(processGroupId);
+    return processGroupExists(processGroupId) ? "unconfirmed" : "gone";
   }
+  let uncertain = false;
   for (const entry of entries) {
     if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) continue;
-    let statText: string;
-    try {
-      statText = await readFile(`/proc/${entry.name}/stat`, "utf8");
-    } catch (error) {
-      if (isErrno(error, "ENOENT")) continue;
-      return true;
+    const member = await linuxProcessIdentity(entry.name);
+    if (member === "gone") continue;
+    if (member === "unconfirmed") {
+      uncertain = true;
+      continue;
     }
-    const commandEnd = statText.lastIndexOf(") ");
-    if (commandEnd < 0) return true;
-    const fields = statText.slice(commandEnd + 2).split(" ");
-    const state = fields[0];
-    const group = Number(fields[2]);
-    if (group === processGroupId && state !== "Z" && state !== "X") return true;
+    if (member.group === processGroupId && !["Z", "X", "x"].includes(member.state)) return "live";
   }
-  return false;
+  if (!processGroupExists(processGroupId)) return "gone";
+  return uncertain ? "unconfirmed" : "gone";
+}
+
+async function linuxProcessIdentity(
+  pid: string,
+): Promise<{ group: number; state: string } | "gone" | "unconfirmed"> {
+  try {
+    const statText = await readFile(`/proc/${pid}/stat`, "utf8");
+    const commandEnd = statText.lastIndexOf(") ");
+    const fields =
+      commandEnd < 0
+        ? []
+        : statText
+            .slice(commandEnd + 2)
+            .trim()
+            .split(/\s+/u);
+    const group = Number(fields[2]);
+    if (fields[0] && /^[A-Za-z]$/u.test(fields[0]) && Number.isSafeInteger(group) && group >= 0) {
+      return { group, state: fields[0] };
+    }
+  } catch (error) {
+    if (isErrno(error, "ENOENT") || isErrno(error, "ESRCH")) return "gone";
+  }
+  // The kernel's status view supplies the same procfs-namespace PGID as stat;
+  // the first NSpgid value precedes any descendant PID-namespace IDs.
+  // A readable status can prove a denied stat belongs to an unrelated group.
+  // If both views are unavailable, retain uncertainty rather than inventing
+  // either a live member or successful cleanup.
+  try {
+    const status = await readFile(`/proc/${pid}/status`, "utf8");
+    const groupText = /^NSpgid:\s*(\d+)(?:[\t ]+\d+)*[\t ]*$/mu.exec(status)?.[1];
+    const state = /^State:[\t ]+([A-Za-z])(?:[\t ]|$)/mu.exec(status)?.[1];
+    const group = Number(groupText);
+    if (groupText !== undefined && state && Number.isSafeInteger(group) && group >= 0) {
+      return { group, state };
+    }
+  } catch (error) {
+    if (isErrno(error, "ENOENT") || isErrno(error, "ESRCH")) return "gone";
+  }
+  return "unconfirmed";
 }
 
 function processGroupExists(processGroupId: number): boolean {
