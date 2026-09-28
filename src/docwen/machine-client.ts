@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { BigIntStats } from "node:fs";
 import { lstat, open, realpath, stat } from "node:fs/promises";
@@ -7,8 +7,8 @@ import { homedir } from "node:os";
 import * as path from "node:path";
 
 import {
-  captureProcessTreeOwnership,
   ProcessTreeTerminationError,
+  spawnOwnedMachineProcess,
   terminateProcessTree,
   type ProcessTreeOwnership,
 } from "../process/runner.js";
@@ -189,18 +189,17 @@ class MachineSession {
 
   constructor(binaryPath: string, locale?: string) {
     try {
-      this.child = spawn(binaryPath, ["serve", "--stdio"], {
+      const owned = spawnOwnedMachineProcess(binaryPath, {
         cwd: path.dirname(binaryPath),
         env: boundedEnvironment(locale),
         shell: false,
         windowsHide: true,
-        detached: process.platform !== "win32",
-        stdio: ["pipe", "pipe", "pipe"],
       });
+      this.child = owned.child;
+      this.processTree = owned.ownership;
     } catch (error) {
       throw localError("docwen_machine_spawn_failed", "Unable to start DocWen Machine Protocol.", error);
     }
-    this.processTree = captureProcessTreeOwnership(this.child, process.platform !== "win32");
     this.closed = new Promise((resolve) => {
       let settled = false;
       const settle = (code: number | null): void => {
