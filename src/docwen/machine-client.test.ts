@@ -23,7 +23,10 @@ const { spawnMock, terminateProcessTreeMock, serverState } = vi.hoisted(() => ({
 }));
 
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
-vi.mock("../process/runner.js", () => ({ terminateProcessTree: terminateProcessTreeMock }));
+vi.mock("../process/runner.js", async (original) => {
+  const actual = await original<typeof import("../process/runner.js")>();
+  return { ...actual, terminateProcessTree: terminateProcessTreeMock };
+});
 
 import {
   runDocWenMachineQuery,
