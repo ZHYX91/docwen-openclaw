@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 3.0.2 - 2026-09-28
+
+- Bound Machine startup, input-stream failure, cancellation and shutdown while preserving the primary operation error.
+- Use a Linux native process owner to retain the process-group identity through cleanup and avoid signaling a reused numeric process group after ownership ends.
+- Report temporary native-image cleanup failures separately from process cleanup, including failures before startup is ready, with bounded diagnostic fields.
+
 ## 3.0.1 - 2026-09-27
 
 - Detect edits within existing output directories across overwrite and rollback boundaries, preserving recovery material when publication cannot be confirmed.
