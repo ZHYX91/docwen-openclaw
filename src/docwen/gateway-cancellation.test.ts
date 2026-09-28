@@ -1,58 +1,93 @@
+import { spawn } from "node:child_process";
 import type * as ChildProcessModule from "node:child_process";
-import { readFile, writeFile, mkdtemp, rm, stat } from "node:fs/promises";
+import { copyFile, link, readFile, writeFile, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
+
 import { MachineFrameDecoder } from "./machine-framing.js";
 import { defineDocWenTools } from "../tools/definitions.js";
-import { terminateProcessTree } from "../process/runner.js";
 
 const state = vi.hoisted(() => ({
   script: "",
-  phase: "accepted",
+  binary: "",
   trace: "",
   reached: () => {},
   child: undefined as ChildProcessModule.ChildProcess | undefined,
   closed: Promise.resolve(),
 }));
-vi.mock("./path.js", () => ({ resolveDocWenBinary: async () => process.execPath }));
+
+vi.mock("./path.js", () => ({ resolveDocWenBinary: async () => state.binary }));
 vi.mock("node:child_process", async (original) => {
   const actual = await original<typeof ChildProcessModule>();
   return {
     ...actual,
     spawn(binary: string, args: string[], options: ChildProcessModule.SpawnOptions) {
-      if (binary !== process.execPath) return actual.spawn(binary, args, options);
-      const child = actual.spawn(binary, [state.script, state.phase, state.trace], options);
-      state.child = child;
-      state.closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
-      const decoder = new MachineFrameDecoder();
-      child.stdout!.on("data", (data: Buffer) => {
-        for (const message of decoder.feed(data)) {
-          const result = message.result as { state?: string } | undefined;
-          if (
-            (state.phase !== "running" && result?.state === "accepted") ||
-            (state.phase === "running" && message.method === "task/progress")
-          ) {
-            // Let the real client consume this exact frame before releasing the test barrier.
-            setImmediate(() => state.reached());
+      const isPosixMachine =
+        process.platform !== "win32" && binary === process.execPath && args[0] === "serve";
+      const isWindowsMachine =
+        process.platform === "win32" && /[\\/]native[\\/]windows-x64\.exe$/iu.test(binary);
+      const child = isPosixMachine
+        ? actual.spawn(binary, [state.script], options)
+        : actual.spawn(binary, args, options);
+      if (isPosixMachine || isWindowsMachine) {
+        state.child = child;
+        state.closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+        const decoder = new MachineFrameDecoder();
+        child.stdout!.on("data", (data: Buffer) => {
+          for (const message of decoder.feed(data)) {
+            const result = message.result as { state?: string } | undefined;
+            const phase = currentPhase();
+            if (
+              (phase !== "running" && result?.state === "accepted") ||
+              (phase === "running" && message.method === "task/progress")
+            ) {
+              setImmediate(() => state.reached());
+            }
           }
-        }
-      });
+        });
+      }
       return child;
     },
   };
 });
 
+function currentPhase(): string {
+  const root = dirname(state.trace);
+  try {
+    return require("node:fs").readFileSync(join(root, "mode.txt"), "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
 // Controlled producer fixture, not a substitute for real DocWen/Gateway acceptance.
 // The plugin adapter, consumer, framing, process teardown and temporary cleanup are real.
 const producer = String.raw`
 const fs = require('node:fs');
-const phase = process.argv[2], trace = process.argv[3];
+const path = require('node:path');
+const root = process.env.DOCWEN_DATA_DIR;
+if (!root) throw new Error('missing controlled fixture root');
+const phase = fs.readFileSync(path.join(root, 'mode.txt'), 'utf8').trim();
+const trace = path.join(root, 'trace.jsonl');
 let buffer = Buffer.alloc(0), sequence = 0;
 function send(message) {
   fs.appendFileSync(trace, JSON.stringify({direction:'out', message})+'\n');
   const data = Buffer.from(JSON.stringify(message));
   process.stdout.write(Buffer.concat([Buffer.from('Content-Length: '+data.length+'\r\n\r\n'),data]));
+}
+function closeInput(afterClose) {
+  setInterval(()=>{},1000);
+  process.stdin.pause();
+  process.stdin.on('error',()=>{});
+  const handle = process.stdin._handle;
+  if (!handle || typeof handle.close !== 'function') throw new Error('controlled stdin pipe handle missing');
+  handle.close(() => {
+    fs.appendFileSync(trace, JSON.stringify({direction:'event', event:'stdin_closed'})+'\n');
+    afterClose();
+  });
 }
 function handle(message) {
   fs.appendFileSync(trace, JSON.stringify({direction:'in', message})+'\n');
@@ -67,13 +102,8 @@ function handle(message) {
         reply({task_id:'task.1',state:'accepted'});
         if(phase==='running' || phase==='stdin_closed') notify('task/progress');
       };
-      if(phase==='stdin_closed') {
-        setInterval(()=>{},1000);
-        process.stdin.pause();
-        process.stdin.on('error',()=>{});
-        fs.closeSync(0);
-        accepted();
-      } else accepted();
+      if(phase==='stdin_closed') closeInput(accepted);
+      else accepted();
       break;
     }
     case 'task/cancel':
@@ -98,25 +128,48 @@ process.stdin.on('data', chunk => {
 `;
 
 const roots: string[] = [];
+
 afterEach(async () => {
-  if (state.child) {
-    await terminateProcessTree(state.child);
-    await state.closed;
+  try {
+    if (state.child && state.child.exitCode === null && state.child.signalCode === null) {
+      state.child.kill("SIGKILL");
+    }
+    await Promise.race([state.closed, delay(2_000)]);
+  } finally {
     state.child = undefined;
+    state.closed = Promise.resolve();
+    vi.unstubAllEnvs();
+    for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
   }
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
+
+async function setup(phase: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "docwen-cancel-boundary-"));
+  roots.push(root);
+  state.script = join(root, "serve");
+  state.trace = join(root, "trace.jsonl");
+  await writeFile(state.script, producer);
+  await writeFile(join(root, "mode.txt"), phase);
+  vi.stubEnv("DOCWEN_DATA_DIR", root);
+
+  if (process.platform === "win32") {
+    state.binary = join(root, "DocWenCLI.exe");
+    try {
+      await link(process.execPath, state.binary);
+    } catch {
+      await copyFile(process.execPath, state.binary);
+    }
+  } else {
+    state.binary = process.execPath;
+  }
+  return root;
+}
 
 describe("Gateway tool adapter cancellation with a controlled real subprocess", () => {
   it.each(["accepted", "running", "ack_only", "ignore", "disconnect", "stdin_closed"])(
     "cancels exactly at %s without publication or retained task work",
     async (phase) => {
-      const root = await mkdtemp(join(tmpdir(), "docwen-cancel-boundary-"));
-      roots.push(root);
-      state.script = join(root, "producer.cjs");
-      state.trace = join(root, "trace.jsonl");
-      state.phase = phase;
-      await writeFile(state.script, producer);
+      const root = await setup(phase);
       const source = join(root, "source.md");
       await writeFile(source, "# Original\n");
       const controller = new AbortController();
@@ -165,6 +218,9 @@ describe("Gateway tool adapter cancellation with a controlled real subprocess", 
         (row) => row.direction === "out" && row.message.method === "task/progress",
       );
       expect(progress).toHaveLength(phase === "running" || phase === "stdin_closed" ? 1 : 0);
+      if (phase === "stdin_closed") {
+        expect(trace.some((row) => row.direction === "event" && row.event === "stdin_closed")).toBe(true);
+      }
       const staging = requests.find((request) => request.method === "task/plan").params.output.staging_root
         .path;
       await expect(stat(dirname(staging))).rejects.toMatchObject({ code: "ENOENT" });
