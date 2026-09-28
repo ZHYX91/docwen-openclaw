@@ -116,6 +116,15 @@ export function spawnLinuxOwnedMachine(
     if (failed || done) return;
     failed = true;
     const error = new Error(message);
+    // A control failure can precede READY. Record image cleanup before handing
+    // off the error; notification deduplication must not defer this until close.
+    if (!imageFailure) {
+      try {
+        cleanImage();
+      } catch (cleanup) {
+        recordImageFailure(error, cleanup);
+      }
+    }
     if (imageFailure) imageFailures.set(error, imageFailure);
     rejectCompletion(error);
     stop();

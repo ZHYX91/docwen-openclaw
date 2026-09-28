@@ -40,6 +40,41 @@ async function inject(phase: "image_unlink" | "directory_remove"): Promise<void>
 
 describe.skipIf(process.platform !== "linux")("native image cleanup failures", () => {
   it.each(["image_unlink", "directory_remove"] as const)(
+    "records %s before delivering a pre-READY control failure",
+    async (phase) => {
+      await inject(phase);
+      const { child, ownership } = spawnLinuxOwnedMachine(process.execPath, {
+        cwd: tmpdir(),
+        env: process.env,
+        shell: false,
+        windowsHide: true,
+      });
+      const control = child.stdio[3] as Duplex;
+      const write = vi.spyOn(control, "write");
+      const startup = new Promise<Error>((resolve) => child.once("error", resolve));
+      const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+      // No event-loop turn has consumed READY. Keep real close after assertions.
+      child.kill("SIGSTOP");
+      control.destroy(Object.assign(new Error("private early control failure"), { code: "EIO" }));
+      try {
+        const primary = await startup;
+        const details = { cleanupObject: "owner_image", cleanupPhase: phase, cleanupSystemCode: "EACCES" };
+        expect(linuxOwnerErrorDetails(primary)).toMatchObject(details);
+        expect(child.listenerCount("error")).toBe(0);
+        expect(child.exitCode).toBeNull();
+        await expect(terminateProcessTree(child, ownership)).rejects.toMatchObject({
+          reason: "linux_owner_unconfirmed",
+          diagnostics: details,
+        });
+        expect(write).not.toHaveBeenCalled();
+        expect(JSON.stringify(details)).not.toContain("private");
+      } finally {
+        child.kill("SIGCONT");
+        await closed;
+      }
+    },
+  );
+  it.each(["image_unlink", "directory_remove"] as const)(
     "keeps DONE separate from %s failure",
     async (phase) => {
       await inject(phase);
