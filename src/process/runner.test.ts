@@ -7,7 +7,11 @@ const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
 
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 
-import { captureProcessTreeOwnership, terminateProcessTree } from "./runner.js";
+import {
+  captureProcessTreeOwnership,
+  spawnOwnedMachineProcess,
+  terminateProcessTree,
+} from "./runner.js";
 
 class FakeChild extends EventEmitter {
   readonly pid = 43_210;
@@ -50,7 +54,44 @@ function mockTaskkillSuccess(): void {
 describe("process-tree termination", () => {
   beforeEach(() => spawnMock.mockReset());
 
-  it("uses the platform tree primitive for a live owned child", async () => {
+  it("launches the Machine process behind the platform-owned boundary", () => {
+    const child = new FakeChild();
+    spawnMock.mockReturnValue(child);
+    const binaryPath =
+      process.platform === "win32" ? "C:\\DocWen\\DocWenCLI.exe" : "/opt/docwen/DocWenCLI";
+    const launched = spawnOwnedMachineProcess(binaryPath, {
+      cwd: process.platform === "win32" ? "C:\\DocWen" : "/opt/docwen",
+      env: { DOCWEN_DATA_DIR: "profile" },
+      shell: false,
+      windowsHide: true,
+    });
+
+    expect(launched.child).toBe(child);
+    if (process.platform === "win32") {
+      expect(launched.ownership).toEqual({ kind: "windows-job-wrapper" });
+      expect(spawnMock).toHaveBeenCalledWith(
+        expect.stringMatching(/[\\/]native[\\/]windows-x64\.exe$/iu),
+        [],
+        expect.objectContaining({
+          detached: false,
+          env: expect.objectContaining({
+            DOCWEN_DATA_DIR: "profile",
+            OPENCLAW_DOCWEN_JOB_TARGET: binaryPath,
+          }),
+          stdio: ["pipe", "pipe", "pipe"],
+        }),
+      );
+    } else {
+      expect(launched.ownership).toEqual({ kind: "posix-process-group", processGroupId: 43_210 });
+      expect(spawnMock).toHaveBeenCalledWith(
+        binaryPath,
+        ["serve", "--stdio"],
+        expect.objectContaining({ detached: true, stdio: ["pipe", "pipe", "pipe"] }),
+      );
+    }
+  });
+
+  it("uses the platform tree primitive for a live generic owned child", async () => {
     const child = new FakeChild();
     const processKill = process.platform === "win32" ? undefined : mockPosixGroupGone();
     if (process.platform === "win32") mockTaskkillSuccess();
@@ -72,7 +113,7 @@ describe("process-tree termination", () => {
     }
   });
 
-  it("does not mistake a sent signal for confirmed process-tree exit", async () => {
+  it("does not mistake a sent signal for confirmed generic process-tree exit", async () => {
     const child = new FakeChild();
     child.killed = true;
     const processKill = process.platform === "win32" ? undefined : mockPosixGroupGone();
@@ -87,6 +128,13 @@ describe("process-tree termination", () => {
     }
   });
 
+  it("kills the Windows job controller even after a previous signal was sent", async () => {
+    const child = new FakeChild();
+    child.killed = true;
+    await terminateProcessTree(child as unknown as ChildProcess, { kind: "windows-job-wrapper" });
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+  });
+
   it("does nothing after an exited child when no captured ownership remains", async () => {
     const child = new FakeChild();
     child.exitCode = 0;
@@ -95,7 +143,7 @@ describe("process-tree termination", () => {
     expect(child.kill).not.toHaveBeenCalled();
   });
 
-  it("retains captured ownership after safe direct-child exit", async () => {
+  it("retains captured generic ownership after safe direct-child exit", async () => {
     const child = new FakeChild();
     const ownership = captureProcessTreeOwnership(
       child as unknown as ChildProcess,
