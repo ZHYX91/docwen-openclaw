@@ -8,6 +8,7 @@ import { PassThrough } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type * as ProcessRunner from "../process/runner.js";
 import { encodeMachineFrame, MachineFrameDecoder, type JsonObject } from "./machine-framing.js";
 
 const { spawnMock, terminateProcessTreeMock, serverState } = vi.hoisted(() => ({
@@ -24,7 +25,7 @@ const { spawnMock, terminateProcessTreeMock, serverState } = vi.hoisted(() => ({
 
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 vi.mock("../process/runner.js", async (original) => {
-  const actual = await original<typeof import("../process/runner.js")>();
+  const actual = await original<typeof ProcessRunner>();
   return { ...actual, terminateProcessTree: terminateProcessTreeMock };
 });
 
