@@ -9,7 +9,7 @@ vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 
 import {
   captureProcessTreeOwnership,
-  ProcessTreeTerminationError,
+  type ProcessTreeTerminationError,
   terminateProcessTree,
 } from "./runner.js";
 
