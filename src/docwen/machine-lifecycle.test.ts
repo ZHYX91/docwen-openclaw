@@ -1,16 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type * as ChildProcessModule from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  copyFile,
-  link,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { copyFile, link, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -224,13 +215,7 @@ async function readTrace(): Promise<Array<Record<string, unknown>>> {
       .filter(Boolean)
       .map((line) => JSON.parse(line) as Record<string, unknown>);
   } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "ENOENT"
-    )
-      return [];
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
     throw error;
   }
 }
@@ -250,12 +235,7 @@ function pidAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return !(
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "ESRCH"
-    );
+    return !(error && typeof error === "object" && "code" in error && error.code === "ESRCH");
   }
 }
 
