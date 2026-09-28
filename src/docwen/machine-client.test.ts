@@ -28,7 +28,27 @@ const { spawnMock, terminateProcessTreeMock, serverState } = vi.hoisted(() => ({
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 vi.mock("../process/runner.js", async (original) => {
   const actual = await original<typeof ProcessRunner>();
-  return { ...actual, terminateProcessTree: terminateProcessTreeMock };
+  return {
+    ...actual,
+    spawnOwnedMachineProcess(
+      binaryPath: string,
+      options: { cwd: string; env: NodeJS.ProcessEnv; shell: false; windowsHide: true },
+    ) {
+      const child = spawnMock(binaryPath, ["serve", "--stdio"], {
+        ...options,
+        detached: process.platform !== "win32",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      return {
+        child,
+        ownership:
+          process.platform === "win32"
+            ? ({ kind: "windows-job-wrapper" } as const)
+            : ({ kind: "posix-process-group", processGroupId: child.pid } as const),
+      };
+    },
+    terminateProcessTree: terminateProcessTreeMock,
+  };
 });
 
 import {
