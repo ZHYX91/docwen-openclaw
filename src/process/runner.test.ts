@@ -53,8 +53,7 @@ describe("process-tree termination", () => {
   it("launches the Machine process behind the platform-owned boundary", () => {
     const child = new FakeChild();
     spawnMock.mockReturnValue(child);
-    const binaryPath =
-      process.platform === "win32" ? "C:\\DocWen\\DocWenCLI.exe" : "/opt/docwen/DocWenCLI";
+    const binaryPath = process.platform === "win32" ? "C:\\DocWen\\DocWenCLI.exe" : "/opt/docwen/DocWenCLI";
     const launched = spawnOwnedMachineProcess(binaryPath, {
       cwd: process.platform === "win32" ? "C:\\DocWen" : "/opt/docwen",
       env: { DOCWEN_DATA_DIR: "profile" },
@@ -148,9 +147,7 @@ describe("process-tree termination", () => {
     child.exitCode = 0;
 
     if (process.platform === "win32") {
-      await expect(
-        terminateProcessTree(child as unknown as ChildProcess, ownership),
-      ).rejects.toMatchObject({
+      await expect(terminateProcessTree(child as unknown as ChildProcess, ownership)).rejects.toMatchObject({
         reason: "windows_root_exited",
       });
       expect(spawnMock).not.toHaveBeenCalled();

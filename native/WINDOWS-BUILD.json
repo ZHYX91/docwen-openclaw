@@ -1,10 +1,31 @@
 {
-  "sourceSha256": "d914772e80779dabf01c6c8a4725cfe5dfda2695613e1139b220ae55d86c9a36",
-  "defSha256": "bc2e98d7876f86919376bd0cc36b9b9283f4afe353a9bb03136837b60e31a6bc",
-  "binarySha256": "27284d8d23bdf7bad5c7b16d13ccd2554070387e014d9dc75ee1d7e352dd96d1",
+  "sourceSha256": "194c90f247e5313b1270b8bc11de7b4170cfde93dfd82f5999685ddd5c396376",
+  "defSha256": "2357f566cd6273c0b8a25ba5c3710e6d0c86f5f67c6c589bdeb6a26c9647b5d9",
+  "binarySha256": "e6cb9680f1494789c43881b7d67e635d269689915dde52f8578446a9a709667c",
+  "binaryBytes": 4608,
   "platform": "win32",
   "arch": "x64",
-  "compiler": "clang 17.0.0 (swiftlang llvm 10999b6d034fe318f3d56c83bddb6572593a8bb0)",
-  "linker": "LLD 17.0.0 (swiftlang llvm 10999b6d034fe318f3d56c83bddb6572593a8bb0)",
-  "timestamp": 0
+  "minimumWindows": "10",
+  "compiler": "用于 x64 的 Microsoft (R) C/C++ 优化编译器 19.44.35228 版",
+  "linker": "Microsoft (R) Incremental Linker Version 14.44.35228.0",
+  "compilerFlags": [
+    "/nologo",
+    "/std:c11",
+    "/O1",
+    "/GS-",
+    "/Zl",
+    "/W4",
+    "/WX",
+    "/c"
+  ],
+  "linkerFlags": [
+    "/nologo",
+    "/entry:entry",
+    "/subsystem:console",
+    "/nodefaultlib",
+    "/machine:x64",
+    "/Brepro"
+  ],
+  "timestamp": 0,
+  "timestampNormalization": "COFF TimeDateStamp zeroed after deterministic MSVC link"
 }

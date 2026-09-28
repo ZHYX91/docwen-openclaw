@@ -343,7 +343,9 @@ class MachineSession {
     this.normalClose = true;
     if (!this.child.stdin.destroyed) this.child.stdin.end();
     const graceful = await settleWithin(this.closed, SESSION_CLOSE_GRACE_MS);
-    if (!graceful.settled) await this.terminate();
+    // Direct-process close does not prove that independent-stdio descendants
+    // have exited. Complete the captured ownership exactly once on both paths.
+    await this.terminate();
     const code = graceful.settled ? graceful.value : await this.closed;
     if (this.queue.drain().length > 0 || this.deferred.length > 0) {
       throw protocolError("unexpected messages after the operation completed");
@@ -367,7 +369,6 @@ class MachineSession {
     this.normalClose = true;
     if (!this.child.stdin.destroyed) this.child.stdin.destroy();
     this.termination = (async () => {
-      if (this.closeSettled) return;
       try {
         await terminateProcessTree(this.child, this.processTree);
       } catch (error) {
@@ -388,7 +389,13 @@ class MachineSession {
 
   private send(message: JsonObject): void {
     this.queue.throwIfFailed();
-    if (this.child.stdin.destroyed) throw protocolError("DocWen stdin is closed");
+    if (
+      this.child.stdin.destroyed ||
+      this.child.stdin.writableEnded ||
+      this.child.stdin.writableFinished ||
+      !this.child.stdin.writable
+    )
+      throw protocolError("DocWen stdin is closed");
     this.child.stdin.write(encodeMachineFrame(message));
   }
 }

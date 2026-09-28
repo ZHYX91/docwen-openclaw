@@ -27,12 +27,14 @@ Review the generated build record, test the result on Linux, then replace
 `windows-x64.exe` is a minimal x64 controller used only for the supported
 Windows host. It creates a Job Object with
 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, creates the configured DocWen binary
-suspended, assigns that process to the job, and only then resumes it. This gives
+suspended with `PROC_THREAD_ATTRIBUTE_JOB_LIST`, so job membership is atomic
+with creation, and only then resumes it. Windows 10 or newer is required.
+A failed attribute setup or creation fails closed without a legacy assignment fallback. This gives
 the plugin owned-tree cleanup that remains valid after the direct DocWen process
 exits, without process-name scans or stale-PID termination.
 
 The controller inherits the Machine stdio handles only long enough to pass them
-to DocWen. It then closes its own stdin handle so a DocWen peer that closes its
+to DocWen. Before resuming DocWen, it closes its own stdin handle so a DocWen peer that closes its
 read side still produces a real broken-pipe condition in the Node parent.
 After the direct DocWen process exits, the controller terminates any remaining
 job members before releasing its stdout/stderr handles. Killing the controller
@@ -40,10 +42,16 @@ also closes its last job handle and therefore terminates the owned job.
 
 `windows-job.c`, `windows-job.def`, and `WINDOWS-BUILD.json` record the
 source, imported Win32 API surface, toolchain, deterministic timestamp, and
-SHA-256 values for the checked-in executable. The recorded build used Clang/LLD
-17 targeting x86-64 Windows with no CRT and `/timestamp:0`; two independent
-builds from the recorded source produced identical bytes. Replace the source,
-definition, executable, and provenance together when rebuilding.
+SHA-256 values for the checked-in executable. In an x64 MSVC developer prompt,
+run `node scripts/build-native-windows.mjs /absolute/owned/build-directory`.
+The recorded MSVC build uses no CRT and deterministic linking, then zeros the
+PE COFF timestamp. Two independent builds produced identical bytes. Replace the
+source, definition, executable, and provenance together when rebuilding.
+
+The Windows source tests compile a small controlled Win32 pipe peer using the
+installed MSVC build tools (also present on the Windows CI runner). This peer
+closes the actual inherited read handle before replying, so query, task, and
+cancel tests exercise a real broken pipe. It is never included in the package.
 
 These helpers are packaging/runtime implementation details. The controlled
 process tests that exercise them are not substitutes for real DocWen, OpenClaw

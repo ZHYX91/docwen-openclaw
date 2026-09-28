@@ -1,6 +1,12 @@
 LIBRARY KERNEL32.dll
 EXPORTS
-  AssignProcessToJobObject
+  InitializeProcThreadAttributeList
+  UpdateProcThreadAttribute
+  DeleteProcThreadAttributeList
+  GetProcessHeap
+  HeapAlloc
+  HeapFree
+  TerminateProcess
   CloseHandle
   CreateJobObjectW
   CreateProcessW

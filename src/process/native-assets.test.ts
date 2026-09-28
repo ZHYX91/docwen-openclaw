@@ -12,6 +12,7 @@ describe("native process ownership assets", () => {
       platform: string;
       arch: string;
       timestamp: number;
+      binaryBytes: number;
     };
     const source = await readFile("native/windows-job.c");
     const definitions = await readFile("native/windows-job.def");
@@ -25,7 +26,11 @@ describe("native process ownership assets", () => {
       defSha256: sha256(definitions),
       binarySha256: sha256(binary),
     });
-    expect(binary.length).toBe(3_072);
+    expect(binary.length).toBe(record.binaryBytes);
+    const pe = binary.readUInt32LE(0x3c);
+    expect(binary.subarray(pe, pe + 4)).toEqual(Buffer.from([0x50, 0x45, 0, 0]));
+    expect(binary.readUInt16LE(pe + 4)).toBe(0x8664);
+    expect(binary.readUInt32LE(pe + 8)).toBe(0);
     expect(binary.subarray(0, 2).toString("ascii")).toBe("MZ");
   });
 });

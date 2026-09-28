@@ -26,6 +26,8 @@ typedef unsigned char BYTE;
 #define CREATE_SUSPENDED 0x00000004u
 #define CREATE_UNICODE_ENVIRONMENT 0x00000400u
 #define CREATE_NO_WINDOW 0x08000000u
+#define EXTENDED_STARTUPINFO_PRESENT 0x00080000u
+#define PROC_THREAD_ATTRIBUTE_JOB_LIST 0x0002000du
 #define JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE 0x00002000u
 #define JobObjectExtendedLimitInformation 9u
 #define INFINITE 0xffffffffu
@@ -36,7 +38,13 @@ typedef unsigned char BYTE;
 
 __declspec(dllimport) HANDLE WINAPI CreateJobObjectW(LPVOID, LPCWSTR);
 __declspec(dllimport) BOOL WINAPI SetInformationJobObject(HANDLE, int, LPVOID, DWORD);
-__declspec(dllimport) BOOL WINAPI AssignProcessToJobObject(HANDLE, HANDLE);
+__declspec(dllimport) BOOL WINAPI InitializeProcThreadAttributeList(LPVOID, DWORD, DWORD, SIZE_T *);
+__declspec(dllimport) BOOL WINAPI UpdateProcThreadAttribute(LPVOID, DWORD, ULONG_PTR, LPVOID, SIZE_T, LPVOID, SIZE_T *);
+__declspec(dllimport) void WINAPI DeleteProcThreadAttributeList(LPVOID);
+__declspec(dllimport) HANDLE WINAPI GetProcessHeap(void);
+__declspec(dllimport) LPVOID WINAPI HeapAlloc(HANDLE, DWORD, SIZE_T);
+__declspec(dllimport) BOOL WINAPI HeapFree(HANDLE, DWORD, LPVOID);
+__declspec(dllimport) BOOL WINAPI TerminateProcess(HANDLE, UINT);
 __declspec(dllimport) BOOL WINAPI TerminateJobObject(HANDLE, UINT);
 __declspec(dllimport) BOOL WINAPI CreateProcessW(LPCWSTR, LPWSTR, LPVOID, LPVOID, BOOL, DWORD, LPVOID, LPCWSTR, LPVOID, LPVOID);
 __declspec(dllimport) DWORD WINAPI ResumeThread(HANDLE);
@@ -108,21 +116,31 @@ struct PROCESS_INFORMATION {
   DWORD dwThreadId;
 };
 
+struct STARTUPINFOEXW {
+  struct STARTUPINFOW StartupInfo;
+  LPVOID lpAttributeList;
+};
+
 _Static_assert(sizeof(struct JOBOBJECT_BASIC_LIMIT_INFORMATION) == 64, "basic limit size");
 _Static_assert(sizeof(struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION) == 144, "extended limit size");
 _Static_assert(sizeof(struct STARTUPINFOW) == 104, "startup size");
 _Static_assert(sizeof(struct PROCESS_INFORMATION) == 24, "process info size");
+_Static_assert(sizeof(struct STARTUPINFOEXW) == 112, "extended startup size");
 
 static WCHAR target[MAX_TARGET];
 static WCHAR commandLine[MAX_COMMAND];
 static const WCHAR targetVariable[] = {'O','P','E','N','C','L','A','W','_','D','O','C','W','E','N','_','J','O','B','_','T','A','R','G','E','T',0};
 static struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits;
-static struct STARTUPINFOW startup;
+static struct STARTUPINFOEXW startup;
 static struct PROCESS_INFORMATION processInfo;
 
 static void fail(HANDLE job, HANDLE process, HANDLE thread) {
   if (thread && thread != INVALID_HANDLE_VALUE) CloseHandle(thread);
-  if (process && process != INVALID_HANDLE_VALUE) CloseHandle(process);
+  if (process && process != INVALID_HANDLE_VALUE) {
+    TerminateProcess(process, WRAPPER_ERROR);
+    WaitForSingleObject(process, 2000u);
+    CloseHandle(process);
+  }
   if (job && job != INVALID_HANDLE_VALUE) {
     TerminateJobObject(job, WRAPPER_ERROR);
     CloseHandle(job);
@@ -183,39 +201,51 @@ void entry(void) {
     fail(job, (HANDLE)0, (HANDLE)0);
   }
 
-  startup.cb = (DWORD)sizeof(startup);
-  startup.dwFlags = STARTF_USESTDHANDLES;
-  startup.hStdInput = input;
-  startup.hStdOutput = output;
-  startup.hStdError = error;
+  /* Assign membership as part of process creation, not after it. If this
+     controller dies during startup, no suspended child can escape the job. */
+  SIZE_T attributeBytes = 0;
+  InitializeProcThreadAttributeList((LPVOID)0, 1, 0, &attributeBytes);
+  if (!attributeBytes) fail(job, (HANDLE)0, (HANDLE)0);
+  HANDLE heap = GetProcessHeap();
+  startup.lpAttributeList = HeapAlloc(heap, 0, attributeBytes);
+  if (!startup.lpAttributeList ||
+      !InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &attributeBytes) ||
+      !UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                                 &job, sizeof(job), (LPVOID)0, (SIZE_T *)0)) {
+    fail(job, (HANDLE)0, (HANDLE)0);
+  }
+  startup.StartupInfo.cb = (DWORD)sizeof(startup);
+  startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+  startup.StartupInfo.hStdInput = input;
+  startup.StartupInfo.hStdOutput = output;
+  startup.StartupInfo.hStdError = error;
   if (!CreateProcessW(
         target,
         commandLine,
         (LPVOID)0,
         (LPVOID)0,
         TRUE,
-        CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
+        CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
         (LPVOID)0,
         (LPCWSTR)0,
-        &startup,
+        &startup.StartupInfo,
         &processInfo)) {
     fail(job, (HANDLE)0, (HANDLE)0);
   }
-  if (!AssignProcessToJobObject(job, processInfo.hProcess)) {
-    TerminateJobObject(job, WRAPPER_ERROR);
-    fail(job, processInfo.hProcess, processInfo.hThread);
-  }
+  DeleteProcThreadAttributeList(startup.lpAttributeList);
+  HeapFree(heap, 0, startup.lpAttributeList);
+  startup.lpAttributeList = (LPVOID)0;
+
+  /* Close the duplicate read end before the child can answer initialize.
+     Its own handle-close barrier then proves that no extra reader remains. */
+  CloseHandle(input);
+  SetStdHandle(STD_INPUT_HANDLE, INVALID_HANDLE_VALUE);
   if (ResumeThread(processInfo.hThread) == 0xffffffffu) {
     TerminateJobObject(job, WRAPPER_ERROR);
     fail(job, processInfo.hProcess, processInfo.hThread);
   }
   CloseHandle(processInfo.hThread);
   processInfo.hThread = (HANDLE)0;
-
-  /* Leave the Machine process as the only stdin reader so a closed peer is
-     observable by the Node parent as a broken pipe. */
-  CloseHandle(input);
-  SetStdHandle(STD_INPUT_HANDLE, INVALID_HANDLE_VALUE);
 
   if (WaitForSingleObject(processInfo.hProcess, INFINITE) != WAIT_OBJECT_0) {
     TerminateJobObject(job, WRAPPER_ERROR);

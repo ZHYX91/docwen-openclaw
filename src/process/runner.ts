@@ -38,7 +38,7 @@ export function spawnOwnedMachineProcess(
     shell: false;
     windowsHide: true;
   },
-): { child: ChildProcessWithoutNullStreams; ownership: ProcessTreeOwnership } {
+): { child: ChildProcessWithoutNullStreams; ownership: ProcessTreeOwnership | undefined } {
   if (process.platform === "win32") {
     if (process.arch !== "x64") throw new Error("The Windows Machine process owner requires x64.");
     const wrapperPath = fileURLToPath(new URL("../../native/windows-x64.exe", import.meta.url));
@@ -56,10 +56,11 @@ export function spawnOwnedMachineProcess(
     detached: true,
     stdio: ["pipe", "pipe", "pipe"],
   });
-  if (!child.pid) throw new Error("DocWen Machine process did not expose a process id.");
   return {
     child,
-    ownership: { kind: "posix-process-group", processGroupId: child.pid },
+    // A failed spawn still emits an asynchronous error. Return its ChildProcess
+    // so the session can install its error listener before the next event turn.
+    ownership: child.pid ? { kind: "posix-process-group", processGroupId: child.pid } : undefined,
   };
 }
 

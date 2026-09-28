@@ -63,6 +63,7 @@ const root = process.env.DOCWEN_DATA_DIR;
 if (!root) throw new Error('missing controlled fixture root');
 const phase = fs.readFileSync(path.join(root, 'mode.txt'), 'utf8').trim();
 const trace = path.join(root, 'trace.jsonl');
+fs.writeFileSync(path.join(root, 'root.pid'), String(process.pid));
 let buffer = Buffer.alloc(0), sequence = 0;
 function send(message) {
   fs.appendFileSync(trace, JSON.stringify({direction:'out', message})+'\n');
@@ -126,6 +127,23 @@ afterEach(async () => {
       state.child.kill("SIGKILL");
     }
     await Promise.race([state.closed, delay(2_000)]);
+    for (const root of roots) {
+      const pid = Number(await readFile(join(root, "root.pid"), "utf8"));
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline) {
+        try {
+          process.kill(pid, 0);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ESRCH") break;
+          throw error;
+        }
+        await delay(20);
+      }
+      expect(() => process.kill(pid, 0)).toThrow();
+    }
+    // Windows job termination and executable image release are asynchronous.
+    // This is fixture teardown, after the operation/result assertions.
+    if (process.platform === "win32") await delay(100);
   } finally {
     state.child = undefined;
     state.closed = Promise.resolve();
