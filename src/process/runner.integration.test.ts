@@ -51,6 +51,8 @@ it.skipIf(process.platform !== "linux")(
     });
     const lines = createInterface({ input: supervisor.stdout });
     const iterator = lines[Symbol.asyncIterator]();
+    let ownedGroupId: number | undefined;
+    let helperPid: number | undefined;
 
     try {
       const first = await Promise.race([
@@ -61,6 +63,8 @@ it.skipIf(process.platform !== "linux")(
       ]);
       expect(first.done).toBe(false);
       const ready = JSON.parse(first.value!) as { rootPid: number; helperPid: number; pgid: number };
+      ownedGroupId = ready.pgid;
+      helperPid = ready.helperPid;
       expect(ready.rootPid).toBe(ready.pgid);
       const before = await linuxProcessState(ready.helperPid);
       expect(before).not.toBe("Z");
@@ -94,6 +98,20 @@ it.skipIf(process.platform !== "linux")(
       });
     } finally {
       lines.close();
+      if (ownedGroupId !== undefined) {
+        try {
+          process.kill(-ownedGroupId, "SIGKILL");
+        } catch {
+          // The exact process group belongs to this fixture and may already be gone.
+        }
+      }
+      if (helperPid !== undefined) {
+        try {
+          process.kill(helperPid, "SIGKILL");
+        } catch {
+          // The exact helper PID belongs to this fixture and may already be reaped.
+        }
+      }
       if (supervisor.exitCode === null && supervisor.signalCode === null) supervisor.kill("SIGKILL");
     }
   },
