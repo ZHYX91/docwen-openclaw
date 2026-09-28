@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   script: "",
   binary: "",
   trace: "",
+  phase: "",
   reached: () => {},
   child: undefined as ChildProcessModule.ChildProcess | undefined,
   closed: Promise.resolve(),
@@ -55,12 +56,7 @@ vi.mock("node:child_process", async (original) => {
 });
 
 function currentPhase(): string {
-  const root = dirname(state.trace);
-  try {
-    return require("node:fs").readFileSync(join(root, "mode.txt"), "utf8").trim();
-  } catch {
-    return "";
-  }
+  return state.phase;
 }
 
 // Controlled producer fixture, not a substitute for real DocWen/Gateway acceptance.
@@ -148,6 +144,7 @@ async function setup(phase: string): Promise<string> {
   roots.push(root);
   state.script = join(root, "serve");
   state.trace = join(root, "trace.jsonl");
+  state.phase = phase;
   await writeFile(state.script, producer);
   await writeFile(join(root, "mode.txt"), phase);
   vi.stubEnv("DOCWEN_DATA_DIR", root);
