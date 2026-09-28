@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import type * as ChildProcessModule from "node:child_process";
 import { copyFile, link, readFile, writeFile, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
