@@ -1,7 +1,16 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type * as ChildProcessModule from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, link, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -168,7 +177,10 @@ afterEach(async () => {
 
     for (const sentinel of state.sentinels.splice(0)) {
       if (sentinel.exitCode === null && sentinel.signalCode === null) sentinel.kill("SIGKILL");
-      await Promise.race([new Promise<void>((resolve) => sentinel.once("close", () => resolve())), delay(1_000)]);
+      await Promise.race([
+        new Promise<void>((resolve) => sentinel.once("close", () => resolve())),
+        delay(1_000),
+      ]);
     }
     if (state.child && state.child.exitCode === null && state.child.signalCode === null) {
       state.child.kill("SIGKILL");
@@ -212,7 +224,13 @@ async function readTrace(): Promise<Array<Record<string, unknown>>> {
       .filter(Boolean)
       .map((line) => JSON.parse(line) as Record<string, unknown>);
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "ENOENT"
+    )
+      return [];
     throw error;
   }
 }
@@ -232,7 +250,12 @@ function pidAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return !(error && typeof error === "object" && "code" in error && error.code === "ESRCH");
+    return !(
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "ESRCH"
+    );
   }
 }
 
