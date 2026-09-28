@@ -52,6 +52,7 @@ register("resource_exhausted", "review_limits", [
 ]);
 register("integrity", "review_failure", ["docwen_machine_integrity_error"]);
 register("timeout", "review_timeout", ["docwen_machine_timeout"]);
+register("cleanup", "review_failure", ["docwen_machine_cleanup_unconfirmed"]);
 register("cancelled", "review_before_retry", ["docwen_machine_cancelled"]);
 register("conflict", "prepare_current_source", ["docwen_source_changed"]);
 register("conflict", "review_current_destination", ["docwen_output_changed"]);
