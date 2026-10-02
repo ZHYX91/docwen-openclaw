@@ -4,7 +4,7 @@ import { DocWenMachineError } from "./machine-client.js";
 import { newPublication, publicationFailure } from "./publication.js";
 
 describe("shareable diagnostic snapshot", () => {
-  it("bounds forwarded process-cleanup facts and preserves the primary category", () => {
+  it("ignores untrusted process-cleanup details and preserves the primary category", () => {
     const error = new DocWenMachineError("docwen_machine_timeout", "private", {
       timeoutMs: 20,
       process_cleanup: {
@@ -18,8 +18,8 @@ describe("shareable diagnostic snapshot", () => {
     expect(summary).toMatchObject({
       error_category: "timeout",
       timeout_ms: 20,
-      process_cleanup: { code: "docwen_machine_cleanup_unconfirmed", reason: "unknown" },
     });
+    expect(summary).not.toHaveProperty("process_cleanup");
     expect(JSON.stringify(summary)).not.toContain("private");
     error.details.process_cleanup = { code: "unknown" };
     expect(diagnosticSummary({ error })).not.toHaveProperty("process_cleanup");

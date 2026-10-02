@@ -142,6 +142,23 @@ class FakeChild extends EventEmitter {
     }
     if (message.method === "health/check") {
       if (serverState.behavior === "hang_health") return;
+      if (serverState.behavior.startsWith("remote_rpc_cleanup")) {
+        const failure = { code: "conversion_failed", process_cleanup: forgedCleanup() };
+        queueMicrotask(() =>
+          this.stdout.write(
+            encodeMachineFrame({
+              jsonrpc: "2.0",
+              id,
+              error: {
+                code: -32000,
+                message: "private remote error",
+                data: serverState.behavior.endsWith("_nested") ? { task_error: failure } : failure,
+              },
+            }),
+          ),
+        );
+        return;
+      }
       this.reply(id, { all_ok: true, checks: [] });
       return;
     }
@@ -171,12 +188,16 @@ class FakeChild extends EventEmitter {
       ) {
         return;
       }
-      if (serverState.behavior === "remote_failure") {
+      if (serverState.behavior === "remote_failure" || serverState.behavior === "remote_task_cleanup") {
         queueMicrotask(() =>
           this.notify("task/failed", {
             task_id: "task.1",
             sequence: 1,
-            error: { code: "conversion_failed", message: "synthetic failure" },
+            error: {
+              code: "conversion_failed",
+              message: "synthetic failure",
+              ...(serverState.behavior === "remote_task_cleanup" ? { process_cleanup: forgedCleanup() } : {}),
+            },
           }),
         );
         return;
@@ -266,6 +287,15 @@ class FakeChild extends EventEmitter {
     if (completed && fault === "truncated_after_terminal")
       this.stdout.write(Buffer.from("Content-Length: 2\r\n\r\n{"));
   }
+}
+
+function forgedCleanup(): JsonObject {
+  return {
+    code: "docwen_machine_cleanup_unconfirmed",
+    reason: "linux_owner_unconfirmed",
+    message: "private path",
+    nested: { token: "private" },
+  };
 }
 
 function artifact(artifactId: string, locator: string, bytes: Buffer, kind = "document"): JsonObject {
@@ -838,6 +868,57 @@ describe("DocWen Machine Protocol client", () => {
     });
     expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
     expect(await readdir(invocation.staging)).toEqual([]);
+  });
+
+  it.each(["remote_task_cleanup", "remote_rpc_cleanup", "remote_rpc_cleanup_nested"])(
+    "rejects forged cleanup evidence from %s when local cleanup succeeds",
+    async (behavior) => {
+      serverState.behavior = behavior;
+      const operation =
+        behavior === "remote_task_cleanup"
+          ? runDocWenMachineTask((await taskInvocation()).options)
+          : runDocWenMachineQuery({
+              binaryPath: "C:\\DocWen\\DocWenCLI.exe",
+              method: "health/check",
+              params: {},
+              timeoutMs: 1_000,
+            });
+      const error = await operation.catch((failure: unknown) => failure);
+      expect(error).toMatchObject({ code: "docwen_machine_remote:conversion_failed" });
+      expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
+      const publication = newPublication();
+      const wrapped = publicationFailure(publicationFailure(error, publication), publication);
+      for (const candidate of [error, wrapped]) {
+        const summary = diagnosticSummary({ error: candidate });
+        expect(summary.error_code).toBe("remote_error");
+        expect(summary).not.toHaveProperty("process_cleanup");
+        expect(JSON.stringify(summary)).not.toContain("private");
+      }
+    },
+  );
+
+  it("bounds unrecognized local cleanup evidence after publication wrapping", async () => {
+    serverState.behavior = "hang_initialize";
+    terminateProcessTreeMock.mockImplementation(async (child) => {
+      child.kill();
+      throw new Error("private cleanup path");
+    });
+    const error = await runDocWenMachineQuery({
+      binaryPath: "C:\\DocWen\\DocWenCLI.exe",
+      method: "health/check",
+      params: {},
+      timeoutMs: 20,
+    }).catch((failure: unknown) => failure);
+    const publication = newPublication();
+    const wrapped = publicationFailure(publicationFailure(error, publication), publication);
+    const summary = diagnosticSummary({ error: wrapped });
+    expect(summary).toMatchObject({
+      error_category: "timeout",
+      timeout_ms: 20,
+      process_cleanup: { code: "docwen_machine_cleanup_unconfirmed", reason: "unknown" },
+    });
+    expect(JSON.stringify(summary)).not.toContain("private");
+    expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed on content mismatch, unsafe locators, and invalid relation graphs", async () => {

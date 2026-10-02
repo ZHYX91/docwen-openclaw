@@ -1,6 +1,11 @@
 import { rm } from "node:fs/promises";
 
-import { DocWenMachineError, machineCleanupDetails, type JsonObject } from "./machine-client.js";
+import {
+  copyMachineCleanupFailure,
+  DocWenMachineError,
+  machineCleanupDetails,
+  type JsonObject,
+} from "./machine-client.js";
 
 export type PublicationWarning = {
   code: "backup_cleanup_failed" | "staging_cleanup_failed" | "lock_cleanup_failed";
@@ -29,6 +34,7 @@ export class OutputPublicationError extends DocWenMachineError {
       ...(machineCleanupDetails(error) ? { process_cleanup: machineCleanupDetails(error) } : {}),
       publication,
     });
+    copyMachineCleanupFailure(error, this);
   }
 }
 
@@ -46,6 +52,7 @@ export function publicationFailure(error: unknown, publication: Publication): Do
             ...(machineCleanupDetails(error) ? { process_cleanup: machineCleanupDetails(error) } : {}),
           },
         );
+  if (failure !== error) copyMachineCleanupFailure(error, failure);
   return new OutputPublicationError(failure, publication);
 }
 

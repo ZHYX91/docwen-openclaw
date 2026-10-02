@@ -44,9 +44,13 @@ export class DocWenMachineError extends Error {
 const processCleanupFailures = new WeakMap<Error, DocWenMachineError>();
 export function machineCleanupDetails(error: unknown): JsonObject | undefined {
   const cleanup = error instanceof Error ? processCleanupFailures.get(error) : undefined;
-  if (cleanup) return { ...cleanup.details, code: cleanup.code };
-  const forwarded = error instanceof DocWenMachineError ? error.details.process_cleanup : undefined;
-  return isJsonObject(forwarded) ? forwarded : undefined;
+  return cleanup ? { ...cleanup.details, code: cleanup.code } : undefined;
+}
+
+// Only locally observed failures confer cleanup provenance on a new wrapper.
+export function copyMachineCleanupFailure(source: unknown, target: Error): void {
+  const cleanup = source instanceof Error ? processCleanupFailures.get(source) : undefined;
+  if (cleanup) processCleanupFailures.set(target, cleanup);
 }
 
 export type MachineInputKind = "document" | "resource";
