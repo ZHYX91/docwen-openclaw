@@ -40,6 +40,15 @@ export class DocWenMachineError extends Error {
   }
 }
 
+// Keep cleanup evidence without mutating (possibly frozen) caller errors.
+const processCleanupFailures = new WeakMap<Error, DocWenMachineError>();
+export function machineCleanupDetails(error: unknown): JsonObject | undefined {
+  const cleanup = error instanceof Error ? processCleanupFailures.get(error) : undefined;
+  if (cleanup) return { ...cleanup.details, code: cleanup.code };
+  const forwarded = error instanceof DocWenMachineError ? error.details.process_cleanup : undefined;
+  return isJsonObject(forwarded) ? forwarded : undefined;
+}
+
 export type MachineInputKind = "document" | "resource";
 export type MachineInputRole =
   | "source"
@@ -545,14 +554,27 @@ async function withSession<T>(
     await session.close();
     return result;
   } catch (error) {
-    await session.terminate();
-    if (options.signal?.aborted) throw cancelled();
-    if (timedOut) {
-      throw new DocWenMachineError("docwen_machine_timeout", "DocWen Machine Protocol timed out.", {
-        timeoutMs: options.timeoutMs,
-      });
+    // Decide the operation outcome before asynchronous cleanup can fail or race
+    // another deadline/abort. Cleanup is secondary evidence, never a replacement.
+    const primary = options.signal?.aborted
+      ? cancelled()
+      : timedOut
+        ? new DocWenMachineError("docwen_machine_timeout", "DocWen Machine Protocol timed out.", {
+            timeoutMs: options.timeoutMs,
+          })
+        : error;
+    clearTimeout(timer);
+    if (cancellationTimer) clearTimeout(cancellationTimer);
+    options.signal?.removeEventListener("abort", onAbort);
+    try {
+      await session.terminate();
+    } catch (cleanup) {
+      const failure =
+        primary instanceof Error ? primary : new Error("DocWen operation failed.", { cause: primary });
+      processCleanupFailures.set(failure, cleanupError(cleanup));
+      throw failure;
     }
-    throw error;
+    throw primary;
   } finally {
     clearTimeout(timer);
     if (cancellationTimer) clearTimeout(cancellationTimer);
