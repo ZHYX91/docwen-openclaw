@@ -5,6 +5,7 @@
 ## 3.0.2 - 2026-09-28
 
 - Bound Machine startup, input-stream failure, cancellation and shutdown while preserving the primary operation error.
+- Preserve timeout, cancellation and protocol/remote errors when process cleanup also fails; share bounded cleanup evidence separately through publication diagnostics.
 - Use a Linux native process owner to retain the process-group identity through cleanup and avoid signaling a reused numeric process group after ownership ends.
 - Report temporary native-image cleanup failures separately from process cleanup, including failures before startup is ready, with bounded diagnostic fields.
 

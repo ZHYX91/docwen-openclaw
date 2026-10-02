@@ -1,4 +1,4 @@
-import { DocWenMachineError, type JsonObject } from "./machine-client.js";
+import { DocWenMachineError, machineCleanupDetails, type JsonObject } from "./machine-client.js";
 import type { Publication, PublicationWarning } from "./publication.js";
 
 const LOCAL_FAILURES: Record<string, { category: string; action: string }> = {};
@@ -104,6 +104,12 @@ const REMOTE_ACTIONS: Record<string, string> = {
   resource_exhausted: "review_limits",
 };
 const WARNING_CODES = new Set(["backup_cleanup_failed", "staging_cleanup_failed", "lock_cleanup_failed"]);
+const PROCESS_CLEANUP_REASONS = new Set([
+  "windows_wrapper_kill_failed",
+  "linux_owner_unconfirmed",
+  "child_close_timeout",
+  "unknown",
+]);
 
 function member(value: unknown, values: Set<string>): string | undefined {
   return typeof value === "string" && values.has(value) ? value : undefined;
@@ -167,6 +173,13 @@ export function diagnosticSummary({
           : "none",
   };
   if (error !== undefined) {
+    const cleanup = machineCleanupDetails(error);
+    if (cleanup?.code === "docwen_machine_cleanup_unconfirmed") {
+      summary.process_cleanup = {
+        code: "docwen_machine_cleanup_unconfirmed",
+        reason: member(cleanup.reason, PROCESS_CLEANUP_REASONS) ?? "unknown",
+      };
+    }
     summary.error_code = local ? candidate : remote ? "remote_error" : cancelled ? "cancelled" : "unknown";
     summary.error_category = category;
     if (system) summary.system_code = systemCandidate;

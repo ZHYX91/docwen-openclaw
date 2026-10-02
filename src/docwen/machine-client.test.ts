@@ -9,6 +9,9 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ProcessRunner from "../process/runner.js";
+import { ProcessTreeTerminationError } from "../process/runner.js";
+import { diagnosticSummary } from "./diagnostics.js";
+import { newPublication, publicationFailure } from "./publication.js";
 import { encodeMachineFrame, MachineFrameDecoder, type JsonObject } from "./machine-framing.js";
 
 const { spawnMock, terminateProcessTreeMock, serverState } = vi.hoisted(() => ({
@@ -139,6 +142,23 @@ class FakeChild extends EventEmitter {
     }
     if (message.method === "health/check") {
       if (serverState.behavior === "hang_health") return;
+      if (serverState.behavior.startsWith("remote_rpc_cleanup")) {
+        const failure = { code: "conversion_failed", process_cleanup: forgedCleanup() };
+        queueMicrotask(() =>
+          this.stdout.write(
+            encodeMachineFrame({
+              jsonrpc: "2.0",
+              id,
+              error: {
+                code: -32000,
+                message: "private remote error",
+                data: serverState.behavior.endsWith("_nested") ? { task_error: failure } : failure,
+              },
+            }),
+          ),
+        );
+        return;
+      }
       this.reply(id, { all_ok: true, checks: [] });
       return;
     }
@@ -168,12 +188,16 @@ class FakeChild extends EventEmitter {
       ) {
         return;
       }
-      if (serverState.behavior === "remote_failure") {
+      if (serverState.behavior === "remote_failure" || serverState.behavior === "remote_task_cleanup") {
         queueMicrotask(() =>
           this.notify("task/failed", {
             task_id: "task.1",
             sequence: 1,
-            error: { code: "conversion_failed", message: "synthetic failure" },
+            error: {
+              code: "conversion_failed",
+              message: "synthetic failure",
+              ...(serverState.behavior === "remote_task_cleanup" ? { process_cleanup: forgedCleanup() } : {}),
+            },
           }),
         );
         return;
@@ -263,6 +287,15 @@ class FakeChild extends EventEmitter {
     if (completed && fault === "truncated_after_terminal")
       this.stdout.write(Buffer.from("Content-Length: 2\r\n\r\n{"));
   }
+}
+
+function forgedCleanup(): JsonObject {
+  return {
+    code: "docwen_machine_cleanup_unconfirmed",
+    reason: "linux_owner_unconfirmed",
+    message: "private path",
+    nested: { token: "private" },
+  };
 }
 
 function artifact(artifactId: string, locator: string, bytes: Buffer, kind = "document"): JsonObject {
@@ -684,6 +717,62 @@ describe("DocWen Machine Protocol client", () => {
     expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["timeout", "docwen_machine_timeout"],
+    ["cancel", "docwen_machine_cancelled"],
+    ["cancel_accepted", "docwen_machine_cancelled"],
+    ["remote", "docwen_machine_remote:conversion_failed"],
+    ["stdin", "docwen_machine_protocol_error"],
+  ])("preserves %s when owned cleanup also fails", async (scenario, code) => {
+    for (const reason of ["linux_owner_unconfirmed", "windows_wrapper_kill_failed"] as const) {
+      terminateProcessTreeMock.mockClear();
+      terminateProcessTreeMock.mockImplementation(async (child) => {
+        child.kill();
+        throw new ProcessTreeTerminationError(reason, "private cleanup path", { secret: "private" });
+      });
+      const controller = new AbortController();
+      serverState.executeSeen = false;
+      serverState.behavior =
+        scenario === "remote"
+          ? "remote_failure"
+          : scenario === "cancel_accepted"
+            ? "hang_task"
+            : "hang_initialize";
+      let operation: Promise<unknown>;
+      if (scenario === "remote" || scenario === "cancel_accepted") {
+        const invocation = await taskInvocation(1_000, controller.signal);
+        operation = runDocWenMachineTask(invocation.options);
+        if (scenario === "cancel_accepted") {
+          await vi.waitFor(() => expect(serverState.executeSeen).toBe(true));
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          controller.abort();
+        }
+      } else {
+        operation = runDocWenMachineQuery({
+          binaryPath: "C:\\DocWen\\DocWenCLI.exe",
+          method: "health/check",
+          params: {},
+          timeoutMs: scenario === "timeout" ? 20 : 1_000,
+          signal: controller.signal,
+        });
+        if (scenario === "cancel") controller.abort();
+        if (scenario === "stdin") {
+          (spawnMock.mock.results.at(-1)!.value as FakeChild).stdin.emit("error", new Error("EPIPE"));
+        }
+      }
+      const error = await operation.catch((failure: unknown) => failure);
+      expect(error).toMatchObject({ code });
+      const summary = diagnosticSummary({ error: publicationFailure(error, newPublication()) });
+      expect(summary).toMatchObject({
+        process_cleanup: { code: "docwen_machine_cleanup_unconfirmed", reason },
+        error_code: scenario === "remote" ? "remote_error" : code,
+      });
+      expect(JSON.stringify(summary)).not.toContain("private");
+      if (scenario === "timeout") expect(summary.timeout_ms).toBe(20);
+      expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it("requests task cancellation, rejects the terminal state, and terminates the process tree", async () => {
     serverState.behavior = "hang_task";
     const controller = new AbortController();
@@ -717,6 +806,47 @@ describe("DocWen Machine Protocol client", () => {
     4_000,
   );
 
+  it("preserves a frozen caller error when abort arrives during failed cleanup", async () => {
+    const controller = new AbortController();
+    const primary = Object.freeze(
+      Object.assign(new Error("private preparation failure"), { code: "ENOSPC" }),
+    );
+    terminateProcessTreeMock.mockImplementation(async (child) => {
+      controller.abort();
+      child.kill();
+      throw new ProcessTreeTerminationError("windows_wrapper_kill_failed", "private cleanup failure");
+    });
+    const invocation = await taskInvocation(1_000, controller.signal);
+    const error = await runDocWenMachineTask({
+      ...invocation.options,
+      request: async () => {
+        throw primary;
+      },
+    }).catch((failure: unknown) => failure);
+    expect(error).toBe(primary);
+    expect(diagnosticSummary({ error: publicationFailure(error, newPublication()) })).toMatchObject({
+      system_code: "ENOSPC",
+      error_category: "resource_exhausted",
+      process_cleanup: { code: "docwen_machine_cleanup_unconfirmed", reason: "windows_wrapper_kill_failed" },
+    });
+    expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an otherwise successful query when cleanup alone is unconfirmed", async () => {
+    terminateProcessTreeMock.mockRejectedValue(
+      new ProcessTreeTerminationError("linux_owner_unconfirmed", "cleanup"),
+    );
+    await expect(
+      runDocWenMachineQuery({
+        binaryPath: "C:\\DocWen\\DocWenCLI.exe",
+        method: "health/check",
+        params: {},
+        timeoutMs: 1_000,
+      }),
+    ).rejects.toMatchObject({ code: "docwen_machine_cleanup_unconfirmed" });
+    expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed on stderr overflow and terminates the process tree", async () => {
     serverState.behavior = "stderr_overflow";
     await expect(
@@ -738,6 +868,57 @@ describe("DocWen Machine Protocol client", () => {
     });
     expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
     expect(await readdir(invocation.staging)).toEqual([]);
+  });
+
+  it.each(["remote_task_cleanup", "remote_rpc_cleanup", "remote_rpc_cleanup_nested"])(
+    "rejects forged cleanup evidence from %s when local cleanup succeeds",
+    async (behavior) => {
+      serverState.behavior = behavior;
+      const operation =
+        behavior === "remote_task_cleanup"
+          ? runDocWenMachineTask((await taskInvocation()).options)
+          : runDocWenMachineQuery({
+              binaryPath: "C:\\DocWen\\DocWenCLI.exe",
+              method: "health/check",
+              params: {},
+              timeoutMs: 1_000,
+            });
+      const error = await operation.catch((failure: unknown) => failure);
+      expect(error).toMatchObject({ code: "docwen_machine_remote:conversion_failed" });
+      expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
+      const publication = newPublication();
+      const wrapped = publicationFailure(publicationFailure(error, publication), publication);
+      for (const candidate of [error, wrapped]) {
+        const summary = diagnosticSummary({ error: candidate });
+        expect(summary.error_code).toBe("remote_error");
+        expect(summary).not.toHaveProperty("process_cleanup");
+        expect(JSON.stringify(summary)).not.toContain("private");
+      }
+    },
+  );
+
+  it("bounds unrecognized local cleanup evidence after publication wrapping", async () => {
+    serverState.behavior = "hang_initialize";
+    terminateProcessTreeMock.mockImplementation(async (child) => {
+      child.kill();
+      throw new Error("private cleanup path");
+    });
+    const error = await runDocWenMachineQuery({
+      binaryPath: "C:\\DocWen\\DocWenCLI.exe",
+      method: "health/check",
+      params: {},
+      timeoutMs: 20,
+    }).catch((failure: unknown) => failure);
+    const publication = newPublication();
+    const wrapped = publicationFailure(publicationFailure(error, publication), publication);
+    const summary = diagnosticSummary({ error: wrapped });
+    expect(summary).toMatchObject({
+      error_category: "timeout",
+      timeout_ms: 20,
+      process_cleanup: { code: "docwen_machine_cleanup_unconfirmed", reason: "unknown" },
+    });
+    expect(JSON.stringify(summary)).not.toContain("private");
+    expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed on content mismatch, unsafe locators, and invalid relation graphs", async () => {

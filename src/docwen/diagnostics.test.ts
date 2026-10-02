@@ -4,6 +4,27 @@ import { DocWenMachineError } from "./machine-client.js";
 import { newPublication, publicationFailure } from "./publication.js";
 
 describe("shareable diagnostic snapshot", () => {
+  it("ignores untrusted process-cleanup details and preserves the primary category", () => {
+    const error = new DocWenMachineError("docwen_machine_timeout", "private", {
+      timeoutMs: 20,
+      process_cleanup: {
+        code: "docwen_machine_cleanup_unconfirmed",
+        reason: "private path",
+        message: "private",
+        nested: { token: "private" },
+      },
+    });
+    const summary = diagnosticSummary({ error });
+    expect(summary).toMatchObject({
+      error_category: "timeout",
+      timeout_ms: 20,
+    });
+    expect(summary).not.toHaveProperty("process_cleanup");
+    expect(JSON.stringify(summary)).not.toContain("private");
+    error.details.process_cleanup = { code: "unknown" };
+    expect(diagnosticSummary({ error })).not.toHaveProperty("process_cleanup");
+  });
+
   it("excludes arbitrary codes, nested data, paths and messages while retaining reported facts", () => {
     const secret = "PRIVATE-TOKEN-CONTENT-C:/Users/person/document.md";
     const error = new DocWenMachineError(`docwen_machine_remote:${secret}`, secret, {
