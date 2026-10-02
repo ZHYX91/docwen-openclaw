@@ -8,11 +8,14 @@ import { PassThrough } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type * as ProcessRunner from "../process/runner.js";
 import { encodeMachineFrame, MachineFrameDecoder, type JsonObject } from "./machine-framing.js";
 
 const { spawnMock, terminateProcessTreeMock, serverState } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
-  terminateProcessTreeMock: vi.fn(async () => undefined),
+  terminateProcessTreeMock: vi.fn(async (child: { kill(): boolean }) => {
+    child.kill();
+  }),
   serverState: {
     behavior: "normal",
     cancelRequests: 0,
@@ -23,7 +26,30 @@ const { spawnMock, terminateProcessTreeMock, serverState } = vi.hoisted(() => ({
 }));
 
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
-vi.mock("../process/runner.js", () => ({ terminateProcessTree: terminateProcessTreeMock }));
+vi.mock("../process/runner.js", async (original) => {
+  const actual = await original<typeof ProcessRunner>();
+  return {
+    ...actual,
+    spawnOwnedMachineProcess(
+      binaryPath: string,
+      options: { cwd: string; env: NodeJS.ProcessEnv; shell: false; windowsHide: true },
+    ) {
+      const child = spawnMock(binaryPath, ["serve", "--stdio"], {
+        ...options,
+        detached: process.platform !== "win32",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      return {
+        child,
+        ownership:
+          process.platform === "win32"
+            ? ({ kind: "windows-job-wrapper" } as const)
+            : ({ kind: "linux-supervisor", completion: Promise.resolve(), stop: () => {} } as const),
+      };
+    },
+    terminateProcessTree: terminateProcessTreeMock,
+  };
+});
 
 import {
   runDocWenMachineQuery,
@@ -76,6 +102,7 @@ class FakeChild extends EventEmitter {
   }
 
   kill(): boolean {
+    if (this.exitCode !== null) return false;
     this.killed = true;
     this.exitCode = null;
     queueMicrotask(() => this.emit("close", null));
@@ -305,7 +332,9 @@ describe("DocWen Machine Protocol client", () => {
   beforeEach(() => {
     spawnMock.mockReset();
     terminateProcessTreeMock.mockClear();
-    terminateProcessTreeMock.mockResolvedValue(undefined);
+    terminateProcessTreeMock.mockImplementation(async (child) => {
+      child.kill();
+    });
     serverState.behavior = "normal";
     serverState.cancelRequests = 0;
     serverState.corruptHash = false;

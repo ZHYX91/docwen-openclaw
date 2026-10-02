@@ -1,6 +1,6 @@
 {
   "name": "@zhyx91/openclaw-docwen",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "OpenClaw tools for DocWen Machine Protocol v2 and Artifact Bundles.",
   "type": "module",
   "packageManager": "npm@11.17.0",
@@ -10,6 +10,8 @@
   "files": [
     "dist",
     "native/linux-x64.node",
+    "native/linux-owner-x64",
+    "native/windows-x64.exe",
     "native/README.md",
     "openclaw.plugin.json",
     "openclaw-config.example.json5",

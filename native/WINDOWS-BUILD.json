@@ -1,0 +1,31 @@
+{
+  "sourceSha256": "194c90f247e5313b1270b8bc11de7b4170cfde93dfd82f5999685ddd5c396376",
+  "defSha256": "2357f566cd6273c0b8a25ba5c3710e6d0c86f5f67c6c589bdeb6a26c9647b5d9",
+  "binarySha256": "e6cb9680f1494789c43881b7d67e635d269689915dde52f8578446a9a709667c",
+  "binaryBytes": 4608,
+  "platform": "win32",
+  "arch": "x64",
+  "minimumWindows": "10",
+  "compiler": "用于 x64 的 Microsoft (R) C/C++ 优化编译器 19.44.35228 版",
+  "linker": "Microsoft (R) Incremental Linker Version 14.44.35228.0",
+  "compilerFlags": [
+    "/nologo",
+    "/std:c11",
+    "/O1",
+    "/GS-",
+    "/Zl",
+    "/W4",
+    "/WX",
+    "/c"
+  ],
+  "linkerFlags": [
+    "/nologo",
+    "/entry:entry",
+    "/subsystem:console",
+    "/nodefaultlib",
+    "/machine:x64",
+    "/Brepro"
+  ],
+  "timestamp": 0,
+  "timestampNormalization": "COFF TimeDateStamp zeroed after deterministic MSVC link"
+}

@@ -1,0 +1,23 @@
+LIBRARY KERNEL32.dll
+EXPORTS
+  InitializeProcThreadAttributeList
+  UpdateProcThreadAttribute
+  DeleteProcThreadAttributeList
+  GetProcessHeap
+  HeapAlloc
+  HeapFree
+  TerminateProcess
+  CloseHandle
+  CreateJobObjectW
+  CreateProcessW
+  ExitProcess
+  GetEnvironmentVariableW
+  GetExitCodeProcess
+  GetStdHandle
+  ResumeThread
+  SetEnvironmentVariableW
+  SetHandleInformation
+  SetInformationJobObject
+  SetStdHandle
+  TerminateJobObject
+  WaitForSingleObject
