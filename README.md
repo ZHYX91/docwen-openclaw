@@ -79,7 +79,7 @@ npm run release:build -- /absolute/path/to/new-output-directory
 
 The local command creates exactly these release-build outputs:
 
-- `openclaw-docwen-3.0.1.tgz`
+- `openclaw-docwen-X.Y.Z.tgz`
 - `SHA256SUMS`
 
 The workflow adds `CANDIDATE.json`, which binds the version, tarball size and SHA-256 to its original repository, commit, full tree, ref, run and attempt. The tarball and this record receive provenance at build time. The immutable GitHub Release also publishes `DOCWEN-CORE.json`, pinning one supported numeric DocWen tag and the exact Linux and Windows asset identities, sizes and SHA-256 digests used by both packaged acceptance jobs. Published `SHA256SUMS` covers the other three assets.
@@ -100,7 +100,7 @@ Publication creates a draft first and resumes matching drafts by uploading only 
 After obtaining that exact tarball, install it with OpenClaw:
 
 ```bash
-openclaw plugins install ./openclaw-docwen-3.0.1.tgz
+openclaw plugins install ./openclaw-docwen-X.Y.Z.tgz
 ```
 
 ## Package structure
