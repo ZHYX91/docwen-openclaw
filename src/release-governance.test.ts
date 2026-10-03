@@ -14,6 +14,8 @@ describe("release governance", () => {
     expect(releaseLibrary).toContain("RELEASE_TARBALL_FILENAME = `openclaw-docwen-${PACKAGE_VERSION}.tgz`");
     expect(releaseLibrary).not.toContain("openclaw-docwen-v2.0.0");
     expect(readme).not.toContain("openclaw-docwen-v2.0.0");
+    expect(readme).toContain("openclaw-docwen-X.Y.Z.tgz");
+    expect(readme).not.toMatch(/openclaw-docwen-\\d+\\.\\d+\\.\\d+\\.tgz/u);
     expect(ciWorkflow).toContain("workflow_dispatch:");
   });
 
