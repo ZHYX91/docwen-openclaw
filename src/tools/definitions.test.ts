@@ -82,6 +82,12 @@ describe("tool definitions", () => {
     expect(definitions.slice(0, 4).every(({ optional }) => optional !== true)).toBe(true);
     expect(definitions.slice(4).every(({ optional }) => optional === true)).toBe(true);
 
+    const splitPdf = definitions.find(({ name }) => name === "docwen_split_pdf") as unknown as {
+      parameters: { properties: { outputDir: { description?: string } } };
+    };
+    expect(splitPdf.parameters.properties.outputDir.description)
+      .toBe("Explicit absolute directory for the committed Artifact Bundle.");
+
     const signal = new AbortController().signal;
     const params = { file: "C:\\input.docx" };
     const config = { language: "zh_CN" };
