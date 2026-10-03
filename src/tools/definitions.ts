@@ -187,7 +187,7 @@ export function defineDocWenTools(tool: DefineTool): DefinedTool[] {
         {
           file: pathValue(),
           pages: Type.String({ minLength: 1, pattern: "^[0-9,\\-]+$" }),
-          outputDir: pathValue(),
+          outputDir: outputDirectoryValue(),
           overwrite: overwriteValue(),
         },
         { additionalProperties: false },
