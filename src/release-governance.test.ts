@@ -15,7 +15,9 @@ describe("release governance", () => {
     expect(releaseLibrary).not.toContain("openclaw-docwen-v2.0.0");
     expect(readme).not.toContain("openclaw-docwen-v2.0.0");
     expect(readme).toContain("openclaw-docwen-X.Y.Z.tgz");
-    expect(readme).not.toMatch(/openclaw-docwen-\\d+\\.\\d+\\.\\d+\\.tgz/u);
+    const versionedTarball = /openclaw-docwen-\d+\.\d+\.\d+\.tgz/u;
+    expect("openclaw plugins install ./openclaw-docwen-3.0.1.tgz").toMatch(versionedTarball);
+    expect(readme).not.toMatch(versionedTarball);
     expect(ciWorkflow).toContain("workflow_dispatch:");
   });
 
