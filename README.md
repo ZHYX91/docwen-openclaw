@@ -4,6 +4,20 @@ Typed OpenClaw tools for DocWen Machine Protocol v2 and verified `docwen.artifac
 
 > Requires DocWen 0.12.0 or later with Machine Protocol v2 and Artifact Bundle v3. Download the plugin from [GitHub Releases](https://github.com/ZHYX91/docwen-openclaw/releases).
 
+## Quick start
+
+1. **Install DocWen separately.** On a supported Windows x64 or Ubuntu 24.04 x64 Gateway host, install a compatible [DocWen release](https://github.com/ZHYX91/docwen/releases) (0.12.0 or later) with Machine Protocol v2 and Artifact Bundle v3. Find the full absolute path to `DocWenCLI.exe` on Windows or `DocWenCLI` on Linux. Installing this plugin does **not** install DocWen.
+2. **Install the OpenClaw plugin.** Download the matching `openclaw-docwen-X.Y.Z.tgz` asset from [this plugin's release page](https://github.com/ZHYX91/docwen-openclaw/releases) and install it on the Gateway host:
+
+   ```sh
+   openclaw plugins install ./openclaw-docwen-X.Y.Z.tgz
+   ```
+
+3. **Configure the local connection.** Use [`openclaw-config.example.json5`](openclaw-config.example.json5) as a reference for `plugins.entries.docwen.enabled` and `plugins.entries.docwen.config.binaryPath`. Replace the sample Windows path with the actual absolute DocWenCLI path on **your Gateway host**; on Linux use the installed executable. The example's `tools.allow: ["docwen"]` enables the **entire** DocWen tool group, including writing tools. Do not copy that allow rule until you intend to authorize those tools.
+4. **Verify without changing documents.** First call `docwen_info` to check the local executable, protocol, and capabilities. Use `docwen_inspect` to identify an unfamiliar file, `docwen_resources` to choose supported formats or templates, and `docwen_validate_markdown` to check Markdown without writing it. Enable the relevant write tools only after reviewing their allow policy, the destination `outputDir`, and any overwrite or in-place options.
+
+**Before writing:** `docwen_convert` and other conversion tools require explicit, host-local file inputs and an output directory. An existing directory cannot be overwritten without explicit `overwrite=true`. The plugin never silently retries an uncertain write. Read [Write safety](skills/docwen/SKILL.md) for detailed tool permissions and the recovery rules.
+
 ## Boundary
 
 - DocWen remains an independently installed product. The plugin never downloads, installs, upgrades, or replaces it.
