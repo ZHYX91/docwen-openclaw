@@ -13,10 +13,21 @@ Typed OpenClaw tools for DocWen Machine Protocol v2 and verified `docwen.artifac
    openclaw plugins install ./openclaw-docwen-X.Y.Z.tgz
    ```
 
-3. **Configure the local connection.** Use [`openclaw-config.example.json5`](openclaw-config.example.json5) as a reference for `plugins.entries.docwen.enabled` and `plugins.entries.docwen.config.binaryPath`. Replace the sample Windows path with the actual absolute DocWenCLI path on **your Gateway host**; on Linux use the installed executable. The example's `tools.allow: ["docwen"]` enables the **entire** DocWen tool group, including writing tools. Do not copy that allow rule until you intend to authorize those tools.
+3. **Configure the local connection.** Start with the read-only [`openclaw-config.example.json5`](openclaw-config.example.json5). Replace `plugins.entries.docwen.config.binaryPath` with the actual absolute DocWenCLI path on **your Gateway host**; on Linux use the installed executable. Its tool allow list is:
+
+   ```json5
+   tools: {
+     allow: ["docwen_info", "docwen_inspect", "docwen_resources", "docwen_validate_markdown"],
+   }
+   ```
+
+   To authorize conversion later, add the specific write tool, such as `"docwen_convert"`, to that list. Allowing `"docwen"` enables the entire group, including all write tools.
+
 4. **Verify without changing documents.** First call `docwen_info` to check the local executable, protocol, and capabilities. Use `docwen_inspect` to identify an unfamiliar file, `docwen_resources` to choose supported formats or templates, and `docwen_validate_markdown` to check Markdown without writing it. Enable the relevant write tools only after reviewing their allow policy, the destination `outputDir`, and any overwrite or in-place options.
 
 **Before writing:** `docwen_convert` and other conversion tools require explicit, host-local file inputs and an output directory. An existing directory cannot be overwritten without explicit `overwrite=true`. The plugin never silently retries an uncertain write. Read [Write safety](skills/docwen/SKILL.md) for detailed tool permissions and the recovery rules.
+
+On Linux, the selected output filesystem must support atomic no-replace publication. Some mounted Windows drives in WSL cannot provide it; choose a native Linux output folder if the filesystem is rejected. Support is determined by the actual operation, not the folder's name.
 
 ## Boundary
 
