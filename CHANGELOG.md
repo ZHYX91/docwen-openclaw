@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 3.0.3 - 2026-10-09
+
+- Probe the actual output location before conversion and reject unsupported atomic publication with actionable diagnostics, while retaining final identity, cancellation and no-overwrite checks.
+- Include the output preflight module in the published package.
+- Add a minimal read-only operator setup and clarify optional write permissions and Linux mount limitations.
+
 ## 3.0.2 - 2026-09-28
 
 - Bound Machine startup, input-stream failure, cancellation and shutdown while preserving the primary operation error.

@@ -2,7 +2,7 @@
   "id": "docwen",
   "name": "DocWen",
   "description": "Operate DocWen through Machine Protocol v2 and verified Artifact Bundles.",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "skills": ["skills/docwen"],
   "activation": {
     "onStartup": false
