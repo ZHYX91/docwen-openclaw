@@ -49,6 +49,8 @@ export const RELEASE_FILES = Object.freeze(
     "dist/docwen/file-integrity.js",
     "dist/docwen/output-lock.d.ts",
     "dist/docwen/output-lock.js",
+    "dist/docwen/output-preflight.d.ts",
+    "dist/docwen/output-preflight.js",
     "dist/docwen/output-transaction.d.ts",
     "dist/docwen/output-transaction.js",
     "dist/docwen/publication.d.ts",

@@ -252,7 +252,10 @@ afterEach(async ({ task }) => {
     state.child = undefined;
     state.closed = Promise.resolve();
     vi.unstubAllEnvs();
-    for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+    // Windows may briefly retain the executable mapping after process exit.
+    // Retry only cleanup; the process-exit assertions above must still pass.
+    for (const root of roots.splice(0))
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 

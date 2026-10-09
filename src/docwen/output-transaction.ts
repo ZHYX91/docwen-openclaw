@@ -14,6 +14,7 @@ import {
   type PathIdentity,
 } from "./file-integrity.js";
 import { acquireOutputLock } from "./output-lock.js";
+import { preflightPublication } from "./output-preflight.js";
 import { assertDirectoryPublicationSupported, publishPathNoReplace } from "./publish-path.js";
 import {
   cleanupPublicationPath,
@@ -38,6 +39,7 @@ export type Published<T> = { value: T; publication: Publication };
 export async function preflightOutputDirectory(
   destination: string,
   overwrite: boolean,
+  signal?: AbortSignal,
 ): Promise<DirectorySnapshot | null> {
   assertSafeDestination(destination);
   assertDirectoryPublicationSupported();
@@ -45,19 +47,20 @@ export async function preflightOutputDirectory(
   try {
     existing = await lstat(destination, { bigint: true });
   } catch (error) {
-    if (isErrno(error, "ENOENT")) return null;
-    throw error;
+    if (!isErrno(error, "ENOENT")) throw error;
   }
-  if (!existing.isDirectory() || existing.isSymbolicLink()) {
+  if (existing && (!existing.isDirectory() || existing.isSymbolicLink())) {
     throw new DocWenMachineError("docwen_output_not_directory", "Bundle output must be a real directory.");
   }
-  if (!overwrite) {
+  if (existing && !overwrite) {
     throw new DocWenMachineError(
       "docwen_output_exists",
       "Bundle output directory already exists; set overwrite=true explicitly.",
     );
   }
-  return captureDirectorySnapshot(destination);
+  const snapshot = existing ? await captureDirectorySnapshot(destination) : null;
+  await preflightPublication(destination, "directory", signal);
+  return snapshot;
 }
 
 export async function atomicCommitBundle(

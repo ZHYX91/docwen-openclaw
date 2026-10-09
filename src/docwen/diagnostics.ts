@@ -27,6 +27,8 @@ register("unsupported", "check_capabilities", [
   "docwen_media_type_unknown",
   "docwen_resource_not_found",
 ]);
+register("unsupported", "choose_supported_filesystem", ["docwen_output_filesystem_unsupported"]);
+register("output_failed", "check_output_directory", ["docwen_output_preflight_failed"]);
 register("unavailable", "check_dependencies", ["docwen_capability_unavailable"]);
 register("configuration", "check_binary_configuration", [
   "docwen_binary_name_invalid",

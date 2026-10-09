@@ -19,6 +19,7 @@ import {
 } from "./machine-client.js";
 import { resolveDocWenBinary } from "./path.js";
 import { diagnosticSummary } from "./diagnostics.js";
+import { preflightPublication } from "./output-preflight.js";
 import {
   atomicCommitBundle,
   atomicReplaceFile,
@@ -544,6 +545,7 @@ async function numberMarkdown(
     );
   }
   const preparedInputs = await buildInputHandles([input]);
+  await preflightPublication(file, "file", signal);
   const sourceVersion = {
     sizeBytes: preparedInputs[0]!.size_bytes,
     sha256: preparedInputs[0]!.sha256,
@@ -603,7 +605,7 @@ async function persistentTask(
 ): Promise<JsonObject> {
   const outputDir = requiredAbsolutePath(params, "outputDir");
   const overwrite = optionalBoolean(params, "overwrite") ?? false;
-  const initialDestination = await preflightOutputDirectory(outputDir, overwrite);
+  const initialDestination = await preflightOutputDirectory(outputDir, overwrite, signal);
   const execution = await executeTask(binaryPath, selection, inputs, options, config, signal, preparedInputs);
   try {
     const committed = await atomicCommitBundle(
