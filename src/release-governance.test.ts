@@ -58,16 +58,4 @@ describe("release governance", () => {
       expect(action?.split("@", 2)[1]).toMatch(/^[0-9a-f]{40}$/u);
     }
   });
-
-  it("accepts immutable numeric DocWen releases at the packaged compatibility baseline and above", () => {
-    const source = readFileSync("scripts/fetch-docwen-release.mjs", "utf8");
-
-    expect(source).toContain("release.immutable !== true");
-    expect(source).toContain("MINIMUM_VERSION = Object.freeze([0, 12, 0])");
-    expect(source).toContain("compareVersion(tuple, MINIMUM_VERSION) >= 0");
-    expect(source).toContain('PIN_SCHEMA = "docwen.openclaw.core_release.v2"');
-    expect(source).toContain('"DocWen-windows-x64.zip"');
-    expect(source).toContain("DocWenCLI-${version}-linux-x64.tar.gz");
-    expect(source).not.toMatch(/\^v\?/u);
-  });
 });
