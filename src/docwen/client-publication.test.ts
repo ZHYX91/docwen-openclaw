@@ -7,6 +7,7 @@ import { executeDocWenTool } from "./client.js";
 import { DocWenMachineError, type MachineTaskCompleted } from "./machine-client.js";
 import type * as MachineClientModule from "./machine-client.js";
 import type * as OutputTransactionModule from "./output-transaction.js";
+import * as publisher from "./publish-path.js";
 
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
@@ -119,6 +120,7 @@ beforeEach(() => {
   });
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 async function input() {
@@ -130,6 +132,31 @@ async function input() {
 }
 
 describe("write tool publication results", () => {
+  it.each([false, true])(
+    "checks output filesystem before starting conversion (inPlace=%s)",
+    async (inPlace) => {
+      const file = await input();
+      vi.spyOn(publisher, "publishPathNoReplace").mockRejectedValue(
+        Object.assign(new Error("unsupported"), { code: "EINVAL" }),
+      );
+      const result = await executeDocWenTool(
+        "docwen_number_markdown",
+        {
+          file,
+          operation: "add",
+          ...(inPlace ? { inPlace: true } : { outputDir: path.join(path.dirname(file), "result") }),
+        },
+        {},
+      );
+      expect(result).toMatchObject({
+        diagnostic_summary: { error_category: "unsupported", recovery_action: "choose_supported_filesystem" },
+      });
+      expect(mocks.task).not.toHaveBeenCalled();
+      expect(await readFile(file, "utf8")).toBe("# Original\n");
+      expect(await readdir(path.dirname(file))).toEqual(["source.md"]);
+    },
+  );
+
   it("sends public PDF split inputs as resources before task planning", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "docwen-pdf-split-kind-"));
     roots.push(root);
