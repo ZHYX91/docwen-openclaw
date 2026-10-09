@@ -13,7 +13,7 @@
     },
   },
   tools: {
-    // The six write tools are optional and must be explicitly allowed.
-    allow: ["docwen"],
+    // Start read-only. Add individual write tools when they are authorized.
+    allow: ["docwen_info", "docwen_inspect", "docwen_resources", "docwen_validate_markdown"],
   },
 }
