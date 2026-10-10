@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, writeFileSync, symlinkSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync, symlinkSync } from "node:fs";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import process from "node:process";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -35,9 +35,7 @@ describe("release work ownership", () => {
     const { repo, workspace } = await governed();
     writeFileSync(join(workspace, "README.md"), "# Shared engineering runtime\n");
     const work = createReleaseWork(repo);
-    expect(work.root.startsWith(join(workspace, "temp") + (process.platform === "win32" ? "\\" : "/"))).toBe(
-      true,
-    );
+    expect(dirname(work.root)).toBe(realpathSync.native(join(workspace, "temp")));
     expect(existsSync(join(repo, "build"))).toBe(false);
     finishReleaseWork(work, true);
     expect(existsSync(work.root)).toBe(false);
@@ -110,7 +108,7 @@ describe("release work ownership", () => {
     const governed = join(repo, "repos", "plugin");
     await mkdir(governed, { recursive: true });
     const work = createReleaseWork(governed);
-    expect(work.root.startsWith(join(governed, "build"))).toBe(true);
+    expect(dirname(work.root)).toBe(realpathSync.native(join(governed, "build")));
     finishReleaseWork(work, true);
     expect(existsSync(join(repo, ".workspace"))).toBe(false);
   });
