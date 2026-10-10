@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync, symlinkSync } from "node:fs";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import process from "node:process";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -21,6 +21,56 @@ async function repository() {
 }
 
 describe("release work ownership", () => {
+  async function governed(record = { schema: "docwen.workspace.v1", repositories: ["repos/plugin"] }) {
+    const root = await repository();
+    const repo = join(root, "repos", "plugin");
+    const workspace = join(root, ".workspace");
+    await mkdir(repo, { recursive: true });
+    await mkdir(join(workspace, "temp"), { recursive: true });
+    writeFileSync(join(workspace, "workspace.json"), JSON.stringify(record));
+    return { repo, workspace };
+  }
+
+  it("uses registered workspace identity without depending on README prose", async () => {
+    const { repo, workspace } = await governed();
+    writeFileSync(join(workspace, "README.md"), "# Shared engineering runtime\n");
+    const work = createReleaseWork(repo);
+    expect(dirname(work.root)).toBe(realpathSync.native(join(workspace, "temp")));
+    expect(existsSync(join(repo, "build"))).toBe(false);
+    finishReleaseWork(work, true);
+    expect(existsSync(work.root)).toBe(false);
+  });
+
+  it.each([
+    [{ schema: "other", repositories: ["repos/plugin"] }, "release_work_registry_invalid"],
+    [
+      { schema: "docwen.workspace.v1", repositories: ["repos/another"] },
+      "release_work_repository_not_registered",
+    ],
+    [{ schema: "docwen.workspace.v1", repositories: ["../escape"] }, "release_work_registered_path_invalid"],
+    [{ schema: "docwen.workspace.v1", repositories: ["C:/escape"] }, "release_work_registered_path_invalid"],
+    [
+      { schema: "docwen.workspace.v1", repositories: [".workspace/temp"] },
+      "release_work_registered_path_invalid",
+    ],
+    [
+      { schema: "docwen.workspace.v1", repositories: ["repos/plugin", "repos/plugin"] },
+      "release_work_duplicate_repository",
+    ],
+  ])("refuses invalid or unrelated registration %#", async (record, error) => {
+    const { repo } = await governed(record);
+    expect(() => createReleaseWork(repo)).toThrow(error);
+    expect(existsSync(join(repo, "build"))).toBe(false);
+  });
+
+  it("refuses a linked runtime before creating owned work", async () => {
+    const { repo, workspace } = await governed();
+    await rm(join(workspace, "temp"), { recursive: true });
+    const outside = await repository();
+    symlinkSync(outside, join(workspace, "temp"), process.platform === "win32" ? "junction" : "dir");
+    expect(() => createReleaseWork(repo)).toThrow("release_work_link_forbidden");
+  });
+
   it("owns a unique run and removes its successful build", async () => {
     const repo = await repository();
     const work = createReleaseWork(repo);
@@ -53,12 +103,33 @@ describe("release work ownership", () => {
     expect(existsSync(work.root)).toBe(true);
   });
 
-  it("does not invent a missing governed workspace", async () => {
+  it("supports an independent clone below a directory merely named repos", async () => {
     const repo = await repository();
     const governed = join(repo, "repos", "plugin");
     await mkdir(governed, { recursive: true });
-    expect(() => createReleaseWork(governed)).toThrow();
+    const work = createReleaseWork(governed);
+    expect(dirname(work.root)).toBe(realpathSync.native(join(governed, "build")));
+    finishReleaseWork(work, true);
     expect(existsSync(join(repo, ".workspace"))).toBe(false);
-    expect(existsSync(join(governed, "build"))).toBe(false);
+  });
+
+  it("refuses an existing workspace without its registry instead of falling back", async () => {
+    const { repo, workspace } = await governed();
+    await rm(join(workspace, "workspace.json"));
+    expect(() => createReleaseWork(repo)).toThrow();
+    expect(existsSync(join(repo, "build"))).toBe(false);
+  });
+
+  it("refuses a dangling workspace link instead of treating it as absent", async () => {
+    const root = await repository();
+    const repo = join(root, "repos", "plugin");
+    await mkdir(repo, { recursive: true });
+    symlinkSync(
+      join(root, "missing"),
+      join(root, ".workspace"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    expect(() => createReleaseWork(repo)).toThrow("release_work_link_forbidden");
+    expect(existsSync(join(repo, "build"))).toBe(false);
   });
 });
