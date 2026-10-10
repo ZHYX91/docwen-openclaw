@@ -8,7 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, win32, posix } from "node:path";
 import process from "node:process";
 
 const OWNER = "docwen.openclaw.release";
@@ -48,17 +48,62 @@ function processIdentity() {
   return `windows-filetime:${identity}`;
 }
 
+function governedParent(repo) {
+  const engineeringRoot = dirname(dirname(repo));
+  const workspace = join(engineeringRoot, ".workspace");
+  const registry = join(workspace, "workspace.json");
+  plainPath(registry);
+  if (!lstatSync(workspace).isDirectory() || !lstatSync(registry).isFile()) {
+    throw new Error("release_work_workspace_missing");
+  }
+  const record = JSON.parse(readFileSync(registry, "utf8"));
+  if (
+    record?.schema !== "docwen.workspace.v1" ||
+    !Array.isArray(record.repositories) ||
+    record.repositories.length === 0
+  ) {
+    throw new Error("release_work_registry_invalid");
+  }
+  const canonical = (value) => (process.platform === "win32" ? value.toLowerCase() : value);
+  const registered = new Set();
+  for (const entry of record.repositories) {
+    if (
+      typeof entry !== "string" ||
+      win32.isAbsolute(entry) ||
+      posix.isAbsolute(entry) ||
+      entry.includes("\\") ||
+      entry.includes(":") ||
+      entry.split("/").some((part) => !part || part === "." || part === "..") ||
+      entry.split("/")[0].toLowerCase() === ".workspace"
+    ) {
+      throw new Error("release_work_registered_path_invalid");
+    }
+    const target = resolve(engineeringRoot, entry);
+    plainPath(target);
+    if (registered.has(canonical(target))) throw new Error("release_work_duplicate_repository");
+    registered.add(canonical(target));
+  }
+  if (!registered.has(canonical(repo))) throw new Error("release_work_repository_not_registered");
+  const parent = join(workspace, "temp");
+  plainPath(parent);
+  if (!lstatSync(parent).isDirectory()) throw new Error("release_work_workspace_missing");
+  return parent;
+}
+
 export function createReleaseWork(repoRoot) {
   const repo = resolve(repoRoot);
+  plainPath(repo);
+  if (!lstatSync(repo).isDirectory()) throw new Error("release_work_repository_missing");
   let parent = join(repo, "build");
   if (basename(dirname(repo)).toLowerCase() === "repos") {
-    const workspace = join(dirname(dirname(repo)), ".workspace");
-    plainPath(workspace);
-    if (!readFileSync(join(workspace, "README.md"), "utf8").startsWith("# DocWen 本地工作区")) {
-      throw new Error("release_work_workspace_missing");
+    let hasWorkspace = false;
+    try {
+      lstatSync(join(dirname(dirname(repo)), ".workspace"));
+      hasWorkspace = true;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
     }
-    parent = join(workspace, "temp");
-    if (!lstatSync(parent).isDirectory()) throw new Error("release_work_workspace_missing");
+    if (hasWorkspace) parent = governedParent(repo);
   }
   plainPath(parent);
   mkdirSync(parent, { recursive: true });
