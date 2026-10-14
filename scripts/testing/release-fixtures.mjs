@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { gzipSync } from "node:zlib";
-import { PACKAGE_VERSION, RELEASE_FILES } from "../release-package-lib.mjs";
+import { OPENCLAW_BUILD_VERSION, PACKAGE_VERSION, RELEASE_FILES } from "../release-package-lib.mjs";
 
 const BLOCK_SIZE = 512;
 const PORTABLE_MTIME_SECONDS = 499_162_500;
@@ -38,8 +38,8 @@ function packageJson(overrides = {}) {
         minGatewayVersion: "2026.7.1-2",
       },
       build: {
-        openclawVersion: "2026.9.5",
-        pluginSdkVersion: "2026.9.5",
+        openclawVersion: OPENCLAW_BUILD_VERSION,
+        pluginSdkVersion: OPENCLAW_BUILD_VERSION,
       },
     },
     peerDependencies: { openclaw: ">=2026.7.1-2 <2027.0.0" },

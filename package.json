@@ -1,6 +1,6 @@
 {
   "name": "@zhyx91/openclaw-docwen",
-  "version": "3.0.3",
+  "version": "3.0.4",
   "description": "OpenClaw tools for DocWen Machine Protocol v2 and Artifact Bundles.",
   "type": "module",
   "packageManager": "npm@11.17.0",
@@ -28,25 +28,25 @@
       "minGatewayVersion": "2026.7.1-2"
     },
     "build": {
-      "openclawVersion": "2026.9.5",
-      "pluginSdkVersion": "2026.9.5"
+      "openclawVersion": "2026.9.9",
+      "pluginSdkVersion": "2026.9.9"
     }
   },
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "build": "node scripts/run-check.mjs build",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage --coverage.reporter=text --coverage.reporter=json-summary",
     "lint": "eslint src scripts",
     "format:check": "prettier --check \"src/**/*.ts\" \"scripts/**/*.mjs\" \"*.{json,json5,md,mjs,ts}\" \"docs/**/*.md\" \"skills/**/*.md\" \".github/**/*.yml\"",
-    "audit:prod": "npm audit --omit=dev --audit-level=high",
+    "audit:prod": "node scripts/run-check.mjs audit",
     "package:check": "node scripts/check-package.mjs",
     "acceptance:docwen-package": "node scripts/run-docwen-package-acceptance.mjs",
     "release:build": "node scripts/build-release.mjs",
-    "check": "npm run check:source && npm run build && npm run package:check",
-    "prepack": "npm run check",
-    "check:source": "npm run lint && npm run format:check && npm run typecheck && npm run test:coverage && npm run audit:prod"
+    "check": "node scripts/run-check.mjs",
+    "prepack": "node scripts/run-check.mjs",
+    "check:source": "node scripts/run-check.mjs source"
   },
   "dependencies": {
     "typebox": "1.3.8"
@@ -60,7 +60,7 @@
     "@vitest/coverage-v8": "4.1.11",
     "ajv": "8.20.0",
     "eslint": "10.8.0",
-    "openclaw": "2026.9.5",
+    "openclaw": "2026.9.9",
     "prettier": "3.8.1",
     "typescript": "^5.7.3",
     "typescript-eslint": "8.65.0",
