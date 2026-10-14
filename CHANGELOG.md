@@ -6,7 +6,7 @@
 
 - Update the build SDK to OpenClaw 2026.9.9 and its development dependency graph, including MCP SDK 1.31.0.
 - Verify build metadata against the locked OpenClaw package and the installed SDK before compilation; reject stale or mismatched package declarations.
-- Keep repository checks on the initiating npm CLI when the SDK installs its own npm dependency.
+- Keep repository checks, prepack, build cleanup and production audit on the initiating npm CLI when the SDK installs its own npm dependency.
 - Validate the registered workspace identity before allocating release work in shared temporary storage.
 
 ## 3.0.3 - 2026-10-09

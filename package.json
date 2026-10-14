@@ -34,18 +34,18 @@
   },
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "build": "node scripts/run-check.mjs build",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage --coverage.reporter=text --coverage.reporter=json-summary",
     "lint": "eslint src scripts",
     "format:check": "prettier --check \"src/**/*.ts\" \"scripts/**/*.mjs\" \"*.{json,json5,md,mjs,ts}\" \"docs/**/*.md\" \"skills/**/*.md\" \".github/**/*.yml\"",
-    "audit:prod": "npm audit --omit=dev --audit-level=high",
+    "audit:prod": "node scripts/run-check.mjs audit",
     "package:check": "node scripts/check-package.mjs",
     "acceptance:docwen-package": "node scripts/run-docwen-package-acceptance.mjs",
     "release:build": "node scripts/build-release.mjs",
     "check": "node scripts/run-check.mjs",
-    "prepack": "npm run check",
+    "prepack": "node scripts/run-check.mjs",
     "check:source": "node scripts/run-check.mjs source"
   },
   "dependencies": {

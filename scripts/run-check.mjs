@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import process from "node:process";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { verifyOpenClawBuildInput } from "./openclaw-build.mjs";
 import { assertReleaseToolchain } from "./release-package-lib.mjs";
@@ -11,24 +11,35 @@ export function runRepositoryChecks({
   mode = "all",
   environment = process.env,
 } = {}) {
-  const steps =
+  const commands =
     mode === "source"
-      ? ["lint", "format:check", "typecheck", "test:coverage", "audit:prod"]
+      ? ["lint", "format:check", "typecheck", "test:coverage", "audit:prod"].map((step) => ["run", step])
       : mode === "all"
-        ? ["check:source", "build", "package:check"]
-        : undefined;
-  if (!steps) throw new Error("repository_check_mode_invalid");
+        ? ["check:source", "build", "package:check"].map((step) => ["run", step])
+        : mode === "build"
+          ? [["run", "clean"]]
+          : mode === "audit"
+            ? [["audit", "--omit=dev", "--audit-level=high"]]
+            : undefined;
+  if (!commands) throw new Error("repository_check_mode_invalid");
   assertReleaseToolchain(npmCli);
-  verifyOpenClawBuildInput(repoRoot, { requireInstalled: true });
-  for (const step of steps) {
-    const result = spawnSync(process.execPath, [npmCli, "run", step], {
+  if (mode !== "audit") verifyOpenClawBuildInput(repoRoot, { requireInstalled: true });
+  const run = (args) => {
+    const result = spawnSync(process.execPath, args, {
       cwd: repoRoot,
       env: environment,
       shell: false,
       stdio: "inherit",
       windowsHide: true,
     });
-    if (result.status !== 0) return result.status ?? 1;
+    return result.status ?? 1;
+  };
+  for (const args of commands) {
+    const status = run([npmCli, ...args]);
+    if (status !== 0) return status;
+  }
+  if (mode === "build") {
+    return run([join(repoRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.build.json"]);
   }
   return 0;
 }
