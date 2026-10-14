@@ -102,6 +102,8 @@ Maintainers can create a local package in an explicit directory outside the repo
 npm run release:build -- /absolute/path/to/new-output-directory
 ```
 
+The source gate and package producer check both build version fields against the resolved OpenClaw lock entry and the installed SDK before compilation. Archive verification uses that locked version, so a stale declaration cannot pass by agreeing with another declaration.
+
 The local command creates exactly these release-build outputs:
 
 - `openclaw-docwen-X.Y.Z.tgz`

@@ -5,6 +5,7 @@ import { makeTarball } from "./testing/release-fixtures.mjs";
 import { describe, expect, it } from "vitest";
 
 import {
+  OPENCLAW_BUILD_VERSION,
   RELEASE_FILES,
   RELEASE_TARBALL_FILENAME,
   assertExternalOutputDirectory,
@@ -58,8 +59,8 @@ describe("release tarball verification", () => {
               extensions: ["./dist/index.js"],
               compat: { pluginApi: "*", minGatewayVersion: "2026.7.1-2" },
               build: {
-                openclawVersion: "2026.9.5",
-                pluginSdkVersion: "2026.9.5",
+                openclawVersion: OPENCLAW_BUILD_VERSION,
+                pluginSdkVersion: OPENCLAW_BUILD_VERSION,
               },
             },
           },
@@ -71,6 +72,18 @@ describe("release tarball verification", () => {
   it("formats one stable GNU-style checksum line for the official asset", () => {
     const checksum = "a".repeat(64);
     expect(formatSha256Sums(checksum)).toBe(`${checksum}  ${RELEASE_TARBALL_FILENAME}\n`);
+  });
+
+  it.each(["openclawVersion", "pluginSdkVersion"])("rejects stale packaged %s metadata", (field) => {
+    const openclaw = {
+      extensions: ["./dist/index.js"],
+      compat: { pluginApi: ">=2026.7.1-2 <2027.0.0", minGatewayVersion: "2026.7.1-2" },
+      build: { openclawVersion: OPENCLAW_BUILD_VERSION, pluginSdkVersion: OPENCLAW_BUILD_VERSION },
+    };
+    openclaw.build[field] = "2026.9.5";
+    expect(() => verifyTarballBuffer(makeTarball({ packageOverrides: { openclaw } }))).toThrow(
+      "release_openclaw_build_invalid",
+    );
   });
 
   it("requires an explicit output directory outside the repository", () => {

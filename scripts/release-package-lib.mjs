@@ -13,7 +13,8 @@ import {
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { gunzipSync } from "node:zlib";
-import { URL } from "node:url";
+import { URL, fileURLToPath } from "node:url";
+import { verifyOpenClawBuildInput } from "./openclaw-build.mjs";
 
 export const RELEASE_NODE_VERSION = "24.19.0";
 export const RELEASE_NPM_VERSION = "11.17.0";
@@ -31,6 +32,9 @@ export const PACKAGE_ID = `${PACKAGE_NAME}@${PACKAGE_VERSION}`;
 export const NPM_TARBALL_FILENAME = `zhyx91-openclaw-docwen-${PACKAGE_VERSION}.tgz`;
 export const RELEASE_TARBALL_FILENAME = `openclaw-docwen-${PACKAGE_VERSION}.tgz`;
 export const SHA256SUMS_FILENAME = "SHA256SUMS";
+export const OPENCLAW_BUILD_VERSION = verifyOpenClawBuildInput(
+  fileURLToPath(new URL("../", import.meta.url)),
+);
 
 export const RELEASE_FILES = Object.freeze(
   [
@@ -169,7 +173,7 @@ function verifyPackageIdentity(entries) {
     fail("release_openclaw_compat_invalid");
   }
   const build = assertPlainObject(openclaw.build, "release_openclaw_build_invalid");
-  if (build.openclawVersion !== "2026.9.5" || build.pluginSdkVersion !== "2026.9.5") {
+  if (build.openclawVersion !== OPENCLAW_BUILD_VERSION || build.pluginSdkVersion !== OPENCLAW_BUILD_VERSION) {
     fail("release_openclaw_build_invalid");
   }
   const peers = assertPlainObject(pkg.peerDependencies, "release_peer_dependencies_invalid");
@@ -442,6 +446,7 @@ function walkRegularFiles(root, current = root) {
 }
 
 export function buildReleaseCandidate(repoRoot, workRoot, npmCli) {
+  verifyOpenClawBuildInput(repoRoot, { requireInstalled: true });
   const packageRoot = join(workRoot, "package");
   const packDestination = join(workRoot, "pack");
   const temporaryDirectory = join(workRoot, "tmp");

@@ -5,9 +5,11 @@ import process from "node:process";
 
 import { RELEASE_FILES, assertReleaseToolchain, packAndVerify } from "./release-package-lib.mjs";
 import { createReleaseWork, finishReleaseWork } from "./release-work.mjs";
+import { verifyOpenClawBuildInput } from "./openclaw-build.mjs";
 
 const npmCli = process.env.npm_execpath;
 assertReleaseToolchain(npmCli);
+verifyOpenClawBuildInput(process.cwd(), { requireInstalled: true });
 const work = createReleaseWork(process.cwd());
 const temporaryRoot = work.root;
 let success = false;
