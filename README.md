@@ -1,8 +1,16 @@
 # DocWen for OpenClaw
 
-Typed OpenClaw tools for DocWen Machine Protocol v2 and verified `docwen.artifact_bundle.v3` output graphs.
+Use DocWen from OpenClaw to check documents, convert files, and work with PDFs and spreadsheets. The files stay on your Gateway computer; the plugin talks to a locally installed DocWen rather than sending them to an online conversion service.
 
-> Requires DocWen 0.12.0 or later with Machine Protocol v2 and Artifact Bundle v3. Download the plugin from [GitHub Releases](https://github.com/ZHYX91/docwen-openclaw/releases).
+Install **DocWen 0.12.0 or later** separately before using this plugin. You also need a release that supports Machine Protocol v2 and Artifact Bundle v3. [Download the plugin](https://github.com/ZHYX91/docwen-openclaw/releases).
+
+## What you can do
+
+- Check a file's format and see which conversions are available.
+- Check Markdown for problems without editing the original.
+- Convert documents, merge or split PDFs, and combine spreadsheets or images.
+
+File-changing tools are **off by default**. You choose which ones OpenClaw may use, and where results are saved.
 
 ## Quick start
 
@@ -13,7 +21,7 @@ Typed OpenClaw tools for DocWen Machine Protocol v2 and verified `docwen.artifac
    openclaw plugins install ./openclaw-docwen-X.Y.Z.tgz
    ```
 
-3. **Configure the local connection.** Start with the read-only [`openclaw-config.example.json5`](openclaw-config.example.json5). Replace `plugins.entries.docwen.config.binaryPath` with the actual absolute DocWenCLI path on **your Gateway host**; on Linux use the installed executable. Its tool allow list is:
+3. **Point the plugin to DocWen.** Start with the read-only [`openclaw-config.example.json5`](openclaw-config.example.json5). Replace `plugins.entries.docwen.config.binaryPath` with the actual absolute DocWenCLI path on **your Gateway host**; on Linux use the installed executable. Its tool allow list is:
 
    ```json5
    tools: {
@@ -23,13 +31,19 @@ Typed OpenClaw tools for DocWen Machine Protocol v2 and verified `docwen.artifac
 
    To authorize conversion later, add the specific write tool, such as `"docwen_convert"`, to that list. Allowing `"docwen"` enables the entire group, including all write tools.
 
-4. **Verify without changing documents.** First call `docwen_info` to check the local executable, protocol, and capabilities. Use `docwen_inspect` to identify an unfamiliar file, `docwen_resources` to choose supported formats or templates, and `docwen_validate_markdown` to check Markdown without writing it. Enable the relevant write tools only after reviewing their allow policy, the destination `outputDir`, and any overwrite or in-place options.
+4. **Test the connection without changing files.** First call `docwen_info` to check the local executable, protocol, and capabilities. Use `docwen_inspect` to identify an unfamiliar file, `docwen_resources` to choose supported formats or templates, and `docwen_validate_markdown` to check Markdown without writing it. Enable the relevant write tools only after reviewing their allow policy, the destination `outputDir`, and any overwrite or in-place options.
 
-**Before writing:** `docwen_convert` and other conversion tools require explicit, host-local file inputs and an output directory. An existing directory cannot be overwritten without explicit `overwrite=true`. The plugin never silently retries an uncertain write. Read [Write safety](skills/docwen/SKILL.md) for detailed tool permissions and the recovery rules.
+**Before enabling changes:** Conversion tools need exact input paths and an output folder on the Gateway computer. They do not replace an existing folder unless `overwrite=true` is explicitly allowed. If a write's result is uncertain, the plugin will not retry it automatically. See [Write safety](skills/docwen/SKILL.md) for details.
 
 On Linux, the selected output filesystem must support atomic no-replace publication. Some mounted Windows drives in WSL cannot provide it; choose a native Linux output folder if the filesystem is rejected. Support is determined by the actual operation, not the folder's name.
 
-## Boundary
+## Language
+
+Set `plugins.entries.docwen.config.language` to one of the supported DocWen language codes, or leave it as `auto`. For Arabic, use `ar_SA` with a DocWen installation that includes its Arabic locale. This controls the language requested from DocWen; the OpenClaw tool labels and descriptions remain in English.
+
+## How it works and what it protects
+
+The plugin starts a local DocWen process for each request. Read-only checks do not publish conversion output; write tools require an explicit destination. The following details explain the safeguards for file paths, process cleanup, and failed writes.
 
 - DocWen remains an independently installed product. The plugin never downloads, installs, upgrades, or replaces it.
 - Every call uses JSON-RPC 2.0 over Content-Length framed stdio. No DocWen argv, route ID, or legacy CLI JSON envelope enters a tool result.
@@ -44,7 +58,7 @@ On Linux, the selected output filesystem must support atomic no-replace publicat
 
 ## Tools
 
-Read tools:
+Read-only tools:
 
 - `docwen_info`
 - `docwen_inspect`

@@ -64,22 +64,22 @@ export function defineDocWenTools(tool: DefineTool): DefinedTool[] {
   return [
     tool({
       name: "docwen_info",
-      label: "DocWen information",
-      description: "Read DocWen product, protocol, capability, platform, and diagnostic status.",
+      label: "Check DocWen",
+      description: "Check whether DocWen is ready to use and see which features it supports.",
       parameters: Type.Object({}, { additionalProperties: false }),
       execute: execute("docwen_info"),
     }),
     tool({
       name: "docwen_inspect",
-      label: "Inspect a document",
-      description: "Inspect one file's actual format and supported DocWen operations without modifying it.",
+      label: "Inspect a file",
+      description: "Identify a file's format and the actions available for it, without changing the file.",
       parameters: Type.Object({ file: pathValue() }, { additionalProperties: false }),
       execute: execute("docwen_inspect"),
     }),
     tool({
       name: "docwen_resources",
-      label: "Discover DocWen resources",
-      description: "List or inspect stable DocWen formats, optimizations, templates, or numbering schemes.",
+      label: "Browse formats and templates",
+      description: "List available formats, templates, optimizations, and heading-numbering schemes.",
       parameters: Type.Object(
         {
           kind: Type.Union([
@@ -97,9 +97,9 @@ export function defineDocWenTools(tool: DefineTool): DefinedTool[] {
     }),
     tool({
       name: "docwen_validate_markdown",
-      label: "Validate Markdown",
+      label: "Check Markdown",
       description:
-        "Validate one Markdown document and return its structured report without modifying the source.",
+        "Check a Markdown document and report problems without changing the original.",
       parameters: Type.Object(
         {
           file: pathValue(),
@@ -116,9 +116,9 @@ export function defineDocWenTools(tool: DefineTool): DefinedTool[] {
     }),
     tool({
       name: "docwen_convert",
-      label: "Convert a document",
+      label: "Convert files",
       description:
-        "Convert explicitly typed inputs and transactionally commit the complete Artifact Bundle to an explicit directory.",
+        "Convert the supplied files and save all generated files together in the chosen output folder.",
       parameters: Type.Object(
         {
           inputs: Type.Array(typedInputValue(), { minItems: 1 }),
@@ -149,7 +149,7 @@ export function defineDocWenTools(tool: DefineTool): DefinedTool[] {
       name: "docwen_number_markdown",
       label: "Number Markdown headings",
       description:
-        "Add or remove Markdown heading numbering using an explicit Bundle directory or in-place authorization.",
+        "Add or remove heading numbers. Save a new result, or update the original only when explicitly allowed.",
       parameters: Type.Object(
         {
           file: pathValue(),
@@ -166,8 +166,8 @@ export function defineDocWenTools(tool: DefineTool): DefinedTool[] {
     }),
     tool({
       name: "docwen_merge_pdfs",
-      label: "Merge PDF files",
-      description: "Merge PDF inputs in caller-provided order and commit the resulting Bundle directory.",
+      label: "Combine PDF files",
+      description: "Combine PDF files in the given order and save the result in the chosen folder.",
       parameters: Type.Object(
         {
           inputs: Type.Array(typedInputValue(), { minItems: 2 }),
@@ -182,7 +182,7 @@ export function defineDocWenTools(tool: DefineTool): DefinedTool[] {
     tool({
       name: "docwen_split_pdf",
       label: "Split a PDF",
-      description: "Split selected one-based PDF pages into a transactional Artifact Bundle directory.",
+      description: "Extract the selected PDF pages and save them in the chosen folder.",
       parameters: Type.Object(
         {
           file: pathValue(),
@@ -197,8 +197,8 @@ export function defineDocWenTools(tool: DefineTool): DefinedTool[] {
     }),
     tool({
       name: "docwen_merge_tables",
-      label: "Merge tables",
-      description: "Merge XLSX table inputs and commit the resulting Artifact Bundle directory.",
+      label: "Combine spreadsheets",
+      description: "Combine Excel tables by rows, columns, or cells and save the result.",
       parameters: Type.Object(
         {
           inputs: Type.Array(typedInputValue(), { minItems: 2 }),
@@ -214,8 +214,8 @@ export function defineDocWenTools(tool: DefineTool): DefinedTool[] {
     }),
     tool({
       name: "docwen_merge_images_to_tiff",
-      label: "Merge images to TIFF",
-      description: "Merge image inputs into TIFF and commit the resulting Artifact Bundle directory.",
+      label: "Combine images into TIFF",
+      description: "Combine the selected images into a TIFF and save the result.",
       parameters: Type.Object(
         {
           inputs: Type.Array(typedInputValue(), { minItems: 2 }),
