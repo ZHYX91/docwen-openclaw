@@ -673,6 +673,10 @@ async function executeTask(
             `DocWen capability does not accept the supplied typed inputs: ${capability.capability_id}`,
           );
         }
+        const taskOptions = { ...selected.options };
+        if (config.language && config.language !== "auto") {
+          setSupportedOption(capability, taskOptions, ["locale"], config.language, "language", false);
+        }
         return {
           capability_id: capability.capability_id,
           inputs,
@@ -680,7 +684,7 @@ async function executeTask(
             staging_root: { kind: "local_path", path: stagingRoot },
             staging_policy: "require_empty",
           },
-          options: selected.options,
+          options: taskOptions,
         };
       },
     });
