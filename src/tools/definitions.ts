@@ -98,8 +98,7 @@ export function defineDocWenTools(tool: DefineTool): DefinedTool[] {
     tool({
       name: "docwen_validate_markdown",
       label: "Check Markdown",
-      description:
-        "Check a Markdown document and report problems without changing the original.",
+      description: "Check a Markdown document and report problems without changing the original.",
       parameters: Type.Object(
         {
           file: pathValue(),
