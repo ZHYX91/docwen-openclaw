@@ -38,6 +38,10 @@ import {
 
 const MARKDOWN_MEDIA_TYPE = "text/markdown";
 const DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const DOC_MEDIA_TYPE = "application/msword";
+const WPS_MEDIA_TYPE = "application/vnd.ms-works";
+const RTF_MEDIA_TYPE = "application/rtf";
+const ODT_MEDIA_TYPE = "application/vnd.oasis.opendocument.text";
 const XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const PDF_MEDIA_TYPE = "application/pdf";
 const CSV_MEDIA_TYPE = "text/csv";
@@ -673,6 +677,10 @@ async function executeTask(
             `DocWen capability does not accept the supplied typed inputs: ${capability.capability_id}`,
           );
         }
+        const taskOptions = { ...selected.options };
+        if (config.language && config.language !== "auto") {
+          setSupportedOption(capability, taskOptions, ["locale"], config.language, "language", false);
+        }
         return {
           capability_id: capability.capability_id,
           inputs,
@@ -680,7 +688,7 @@ async function executeTask(
             staging_root: { kind: "local_path", path: stagingRoot },
             staging_policy: "require_empty",
           },
-          options: selected.options,
+          options: taskOptions,
         };
       },
     });
@@ -933,7 +941,14 @@ function sourceInput(file: string): InputSpec {
 }
 
 function isResourceMediaType(mediaType: string): boolean {
-  return mediaType !== MARKDOWN_MEDIA_TYPE && mediaType !== DOCX_MEDIA_TYPE;
+  return ![
+    MARKDOWN_MEDIA_TYPE,
+    DOCX_MEDIA_TYPE,
+    DOC_MEDIA_TYPE,
+    WPS_MEDIA_TYPE,
+    RTF_MEDIA_TYPE,
+    ODT_MEDIA_TYPE,
+  ].includes(mediaType);
 }
 
 function validateInputKindRole(kind: MachineInputKind, role: MachineInputRole): void {
@@ -978,8 +993,14 @@ function mediaTypeForPath(file: string): string {
     ".md": MARKDOWN_MEDIA_TYPE,
     ".markdown": MARKDOWN_MEDIA_TYPE,
     ".docx": DOCX_MEDIA_TYPE,
+    ".doc": DOC_MEDIA_TYPE,
+    ".wps": WPS_MEDIA_TYPE,
+    ".rtf": RTF_MEDIA_TYPE,
+    ".odt": ODT_MEDIA_TYPE,
     ".xlsx": XLSX_MEDIA_TYPE,
     ".pdf": PDF_MEDIA_TYPE,
+    ".ofd": "application/vnd.ofd",
+    ".xps": "application/vnd.ms-xpsdocument",
     ".csv": CSV_MEDIA_TYPE,
     ".png": PNG_MEDIA_TYPE,
     ".tif": TIFF_MEDIA_TYPE,

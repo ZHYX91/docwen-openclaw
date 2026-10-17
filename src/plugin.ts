@@ -6,7 +6,7 @@ import { defineDocWenTools } from "./tools/definitions.js";
 export const docwenPlugin = defineToolPlugin({
   id: "docwen",
   name: "DocWen",
-  description: "Operate DocWen through Machine Protocol v2 and verified Artifact Bundles.",
+  description: "Check and convert local documents, combine files, and split PDFs with DocWen.",
   activation: { onStartup: false },
   configSchema: docwenConfigSchema,
   tools: (tool) => defineDocWenTools(tool),

@@ -86,7 +86,7 @@ describe("tool definitions", () => {
       parameters: { properties: { outputDir: { description?: string } } };
     };
     expect(splitPdf.parameters.properties.outputDir.description).toBe(
-      "Explicit absolute directory for the committed Artifact Bundle.",
+      "Full path to the output folder on the Gateway computer. All generated files are saved together here.",
     );
 
     const signal = new AbortController().signal;

@@ -13,6 +13,8 @@ describe("DocWen plugin configuration", () => {
         writeTimeoutMs: 1_800_000,
       }),
     ).toBe(true);
+    expect(Check(docwenConfigSchema, { language: "ar_SA" })).toBe(true);
+    expect(Check(docwenConfigSchema, { language: "ar" })).toBe(false);
     expect(Check(docwenConfigSchema, { language: "legacy", unknown: true })).toBe(false);
     expect(Check(docwenConfigSchema, { readTimeoutMs: 999 })).toBe(false);
     expect(Check(docwenConfigSchema, { writeTimeoutMs: 1_800_001 })).toBe(false);
