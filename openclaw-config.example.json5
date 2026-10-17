@@ -5,7 +5,7 @@
         enabled: true,
         config: {
           binaryPath: "C:\\Program Files\\DocWen\\DocWenCLI.exe",
-          language: "zh_CN",
+          language: "auto",
           readTimeoutMs: 30000,
           writeTimeoutMs: 600000,
         },
