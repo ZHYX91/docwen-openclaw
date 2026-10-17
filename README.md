@@ -2,7 +2,7 @@
 
 Use DocWen from OpenClaw to check documents, convert files, and work with PDFs and spreadsheets. The files stay on your Gateway computer; the plugin talks to a locally installed DocWen rather than sending them to an online conversion service.
 
-Install **DocWen 0.12.0 or later** separately before using this plugin. You also need a release that supports Machine Protocol v2 and Artifact Bundle v3. [Download the plugin](https://github.com/ZHYX91/docwen-openclaw/releases).
+Install **DocWen 0.12.0 or later** separately before using this plugin. [Download the plugin](https://github.com/ZHYX91/docwen-openclaw/releases).
 
 ## What you can do
 
@@ -31,15 +31,11 @@ File-changing tools are **off by default**. You choose which ones OpenClaw may u
 
    To authorize conversion later, add the specific write tool, such as `"docwen_convert"`, to that list. Allowing `"docwen"` enables the entire group, including all write tools.
 
-4. **Test the connection without changing files.** First call `docwen_info` to check the local executable, protocol, and capabilities. Use `docwen_inspect` to identify an unfamiliar file, `docwen_resources` to choose supported formats or templates, and `docwen_validate_markdown` to check Markdown without writing it. Enable the relevant write tools only after reviewing their allow policy, the destination `outputDir`, and any overwrite or in-place options.
+4. **Test the connection without changing files.** Ask OpenClaw to run `docwen_info` to check that DocWen is ready. Then use `docwen_inspect` to check a file, `docwen_resources` to find a format or template, or `docwen_validate_markdown` to check Markdown. When you want to convert a file, allow the relevant tool and choose its output folder.
 
-**Before enabling changes:** Conversion tools need exact input paths and an output folder on the Gateway computer. They do not replace an existing folder unless `overwrite=true` is explicitly allowed. If a write's result is uncertain, the plugin will not retry it automatically. See [Write safety](skills/docwen/SKILL.md) for details.
+Conversion tools need full input paths and an output folder on the Gateway computer. Choose a new folder: `overwrite=true` replaces the entire existing output folder and its contents. Markdown numbering can also update the original file when `inPlace=true` is explicitly requested. If a write's result is uncertain, the plugin will not retry it automatically. See [the examples](docs/examples/basic.md) for common tasks and [the configuration reference](docs/technical-details.md#configuration) for settings.
 
 On Linux, the selected output filesystem must support atomic no-replace publication. Some mounted Windows drives in WSL cannot provide it; choose a native Linux output folder if the filesystem is rejected. Support is determined by the actual operation, not the folder's name.
-
-## Language
-
-Set `plugins.entries.docwen.config.language` to one of the supported DocWen language codes, or leave it as `auto`. For Arabic, use `ar_SA` with a DocWen installation that includes its Arabic locale. This controls the language requested from DocWen; the OpenClaw tool labels and descriptions remain in English.
 
 ## How it works
 
@@ -49,23 +45,20 @@ Paths must refer to files on the **Gateway computer**, not another device connec
 
 ## Tools
 
-Read-only tools:
+| Tool                          | What it does                                         | Permission       |
+| ----------------------------- | ---------------------------------------------------- | ---------------- |
+| `docwen_info`                 | Check the DocWen installation and available features | Read-only        |
+| `docwen_inspect`              | Identify a file's format and available actions       | Read-only        |
+| `docwen_resources`            | Browse formats, templates, and numbering schemes     | Read-only        |
+| `docwen_validate_markdown`    | Check Markdown and report problems                   | Read-only        |
+| `docwen_convert`              | Convert files into the chosen format                 | Allow separately |
+| `docwen_number_markdown`      | Add or remove Markdown heading numbers               | Allow separately |
+| `docwen_merge_pdfs`           | Combine PDFs in the given order                      | Allow separately |
+| `docwen_split_pdf`            | Extract selected PDF pages                           | Allow separately |
+| `docwen_merge_tables`         | Combine spreadsheets                                 | Allow separately |
+| `docwen_merge_images_to_tiff` | Combine images into a TIFF                           | Allow separately |
 
-- `docwen_info`
-- `docwen_inspect`
-- `docwen_resources`
-- `docwen_validate_markdown`
-
-Optional write tools:
-
-- `docwen_convert`
-- `docwen_number_markdown`
-- `docwen_merge_pdfs`
-- `docwen_split_pdf`
-- `docwen_merge_tables`
-- `docwen_merge_images_to_tiff`
-
-The first four tools are read-only. The remaining tools are optional and must be explicitly allowed in OpenClaw. Keep the read-only allow list until you need to write files. For the complete input shapes and safeguards, see [the technical details](docs/technical-details.md).
+Available conversions depend on your DocWen installation. The plugin checks the advertised features before starting a task. For input fields and write safeguards, see [the technical details](docs/technical-details.md).
 
 ## Local development
 
@@ -75,11 +68,7 @@ npm run check
 npx openclaw plugins validate --root . --entry ./dist/index.js
 ```
 
-Use `openclaw-config.example.json5` as the configuration shape.
-
-The source suite exercises cancellation at accepted/running protocol frames through the registered tool adapter and a controlled real subprocess. Publication tests inject cancellation and competing writes at the final filesystem commit, checking original bytes, reported publication state, lock release and temporary cleanup. These deterministic tests do not constitute live Gateway or LLM acceptance; record those host checks separately against the exact package.
-
-Final packaged-D2 acceptance uses `npm run acceptance:docwen-package`. It requires the exact extracted `DocWenCLI` path plus its SHA-256, byte size, and stable version at least 0.12.0 through `DOCWEN_TEST_BINARY`, `DOCWEN_TEST_SHA256`, `DOCWEN_TEST_SIZE_BYTES`, and `DOCWEN_TEST_VERSION`. Set `DOCWEN_PLUGIN_CANDIDATE_DIR` to the absolute directory containing the plugin tarball, `CANDIDATE.json` and `SHA256SUMS` from the candidate workflow. The wrapper verifies and extracts that archive into owned temporary storage, loads its compiled client, and rechecks both candidates after the real Machine round trip. It uses an isolated DocWen profile and removes successful temporary work.
+Use `openclaw-config.example.json5` as the configuration shape. See [testing and package acceptance](docs/technical-details.md#testing-and-package-acceptance) for the test coverage and checks against a packaged DocWen release.
 
 ## Releases
 

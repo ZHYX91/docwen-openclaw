@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Accept DOC, WPS, RTF, ODT, OFD and XPS inputs using DocWen's declared media types; keep conversions and optimizations gated by the installed capabilities.
+- Return actionable setup errors with stable configuration codes when DocWenCLI is missing or incorrectly configured.
+- Clarify ordinary Markdown-to-Word inputs, simplify plugin descriptions and examples, and move language settings and package acceptance details out of the README.
+
 ## 3.0.4 - 2026-10-14
 
 - Update the build SDK to OpenClaw 2026.9.9 and its development dependency graph, including MCP SDK 1.31.0.

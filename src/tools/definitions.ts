@@ -13,19 +13,21 @@ const pathValue = () =>
 const outputDirectoryValue = () =>
   Type.String({
     minLength: 1,
-    description: "Explicit absolute directory for the committed Artifact Bundle.",
+    description:
+      "Full path to the output folder on the Gateway computer. All generated files are saved together here.",
   });
 const overwriteValue = () => Type.Optional(Type.Boolean({ default: false }));
 const logicalPathValue = () =>
   Type.String({
     minLength: 1,
     description:
-      "Case-sensitive relative POSIX path in this request's virtual root; never inferred from disk.",
+      "Relative path used to resolve links between the supplied files, such as documents/report.md. Use forward slashes and preserve letter case; supply each linked file explicitly.",
   });
 const templateIdValue = () =>
   Type.String({
     minLength: 1,
-    description: "Canonical DocWen template ID returned by docwen_resources; never a path or display name.",
+    description:
+      "Template ID returned by docwen_resources. Copy the ID exactly; a filename or template title will not work.",
   });
 const typedInputValue = () =>
   Type.Union([

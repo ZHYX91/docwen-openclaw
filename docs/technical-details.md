@@ -2,6 +2,19 @@
 
 This reference explains the implementation and safety boundaries behind the short [README](../README.md). It is intended for maintainers and for anyone automating file writes.
 
+## Configuration
+
+Put these settings under `plugins.entries.docwen.config`. The [example configuration](../openclaw-config.example.json5) starts with read-only tools enabled.
+
+| Setting          | Default            | Purpose                                                                                  |
+| ---------------- | ------------------ | ---------------------------------------------------------------------------------------- |
+| `binaryPath`     | Must be configured | Full path to `DocWenCLI.exe` on Windows or `DocWenCLI` on Linux, on the Gateway computer |
+| `language`       | `auto`             | Language requested from the installed DocWen                                             |
+| `readTimeoutMs`  | `30000`            | Time limit for read requests, in milliseconds                                            |
+| `writeTimeoutMs` | `600000`           | Overall time limit for preparing and running a document task, in milliseconds            |
+
+Both time limits accept values from `1000` to `1800000`. With `language: "auto"`, DocWen uses its default language. To request another language, use a code accepted by the [configuration schema](../src/config.ts) and included in your DocWen installation; for example, Arabic uses `ar_SA`. This setting controls DocWen output, templates, and task options where supported. The plugin's OpenClaw tool labels and descriptions remain in English.
+
 ## Process, protocol and filesystem boundaries
 
 The plugin starts a local DocWen process for each request. Read-only checks do not publish conversion output; write tools require an explicit destination. The following details explain the safeguards for file paths, process cleanup, and failed writes.
@@ -21,7 +34,7 @@ The plugin starts a local DocWen process for each request. Read-only checks do n
 
 The write tools use `outputDir` as the transaction target. If it already exists, the call fails unless the caller explicitly sets `overwrite=true`. A local IPC lock rejects concurrent writers, the destination observed before conversion is rechecked immediately before the swap, and every copied artifact is revalidated. The committed directory contains exactly the Bundle's logical artifact paths. Hashes, entries and relations remain in the structured result; no hidden manifest is added.
 
-Publication and rollback never replace a newly appearing target. Windows uses native directory rename semantics; Linux x64 uses the included minimal Node-API component for `renameat2(RENAME_NOREPLACE)`. Files use an exclusive hard link on both systems. Unsupported filesystems fail explicitly. See [the component's source and build instructions](native/README.md).
+Publication and rollback never replace a newly appearing target. Windows uses native directory rename semantics; Linux x64 uses the included minimal Node-API component for `renameat2(RENAME_NOREPLACE)`. Files use an exclusive hard link on both systems. Unsupported filesystems fail explicitly. See [the component's source and build instructions](../native/README.md).
 
 Write results contain `status` (`success`, `warning`, `failed` or `unconfirmed`) and `publication` with `state`, `retry` and structured `warnings`. A committed result remains `published` if backup, staging or lock cleanup fails, and includes usable output paths. An uncertain publication or failed rollback is `unconfirmed`, includes recovery paths, and must not be retried automatically. A failure known to precede publication is `not_published`; review its cause before retrying. Cancellation is checked before the commit begins; once that boundary is crossed, the transaction completes or restores the previous output.
 
@@ -33,11 +46,19 @@ Output locks use a Windows named pipe or a Linux abstract Unix-domain socket der
 
 `docwen_convert`, `docwen_merge_pdfs`, `docwen_merge_tables`, and `docwen_merge_images_to_tiff` accept typed `inputs` rather than path lists. Each item contains `{ file, kind, role, logicalPath }`. `logicalPath` is a unique, normalized relative POSIX key in the request virtual root; it is not derived from `file`. For example, a Markdown source at `doc/report.md` can reference the explicitly supplied linked PNG at `doc/assets/chart.png` even when their physical files are in unrelated directories.
 
-The `convert.markdown.to_docx` Machine capability is intentionally different from ordinary source-based conversions: it accepts exactly one `neutral_document` document and one `numbering_export_plan` resource. These roles bind JSON files to `application/vnd.docwen.resolved-document+json` and `application/vnd.docwen.numbering-export-plan+json`; `source`, `linked_resource`, bibliography, citation-style, or additional inputs are rejected for this capability.
+For an ordinary Markdown-to-Word task, use a Markdown `source` document and explicitly supplied `linked_resource` images. This requires the installed DocWen to advertise `convert.markdown_source.to_docx`. The plugin chooses the capability from the actual input roles and target format; it does not manufacture parsed document JSON when the source-based capability is unavailable.
+
+The separate `convert.markdown.to_docx` capability is for integrations that already have a resolved document and numbering plan. It accepts exactly one `neutral_document` document and one `numbering_export_plan` resource. These roles bind JSON files to `application/vnd.docwen.resolved-document+json` and `application/vnd.docwen.numbering-export-plan+json`; `source`, `linked_resource`, bibliography, citation-style, or additional inputs are rejected only for this resolved-document capability. See [the examples](examples/basic.md) for the ordinary Markdown input form.
 
 `docwen_convert` accepts an optional `optimization` resource ID. It selects a unique available transform capability whose `optimization_id`, typed input shape, and output media type match the request. A resource listing alone does not make an optimizer executable. Legacy Word inputs also require an available preconversion chain; an unavailable or ambiguous optimization fails without reverting to ordinary conversion. Options must satisfy the selected capability's contract.
 
 `docwen_number_markdown` is the sole exception: it requires exactly one of an `outputDir` or `inPlace=true`. In-place replacement is performed only after the returned artifact has passed path, graph, size, and SHA-256 validation.
+
+## Testing and package acceptance
+
+The source suite exercises cancellation at accepted/running protocol frames through the registered tool adapter and a controlled real subprocess. Publication tests inject cancellation and competing writes at the final filesystem commit, checking original bytes, reported publication state, lock release and temporary cleanup. These deterministic tests do not constitute live Gateway or LLM acceptance; record those host checks separately against the exact package.
+
+Run `npm run acceptance:docwen-package` to verify the packaged plugin against a packaged DocWen release. It requires the exact extracted `DocWenCLI` path plus its SHA-256, byte size, and stable version at least 0.12.0 through `DOCWEN_TEST_BINARY`, `DOCWEN_TEST_SHA256`, `DOCWEN_TEST_SIZE_BYTES`, and `DOCWEN_TEST_VERSION`. Set `DOCWEN_PLUGIN_CANDIDATE_DIR` to the absolute directory containing the plugin tarball, `CANDIDATE.json` and `SHA256SUMS` from the candidate workflow. The wrapper verifies and extracts that archive into owned temporary storage, loads its compiled client, and rechecks both candidates after the real Machine round trip. It uses an isolated DocWen profile and removes successful temporary work.
 
 ## Source layout
 

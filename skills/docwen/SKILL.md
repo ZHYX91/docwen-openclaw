@@ -1,6 +1,6 @@
 ---
 name: docwen
-description: Use DocWen Machine Protocol v2 through typed OpenClaw tools.
+description: Check and convert local documents with the registered DocWen tools.
 metadata: { "openclaw": { "requires": { "config": ["plugins.entries.docwen.enabled"] } } }
 ---
 
@@ -32,7 +32,8 @@ Before calling a write tool:
 - confirm every input and `outputDir` is an exact absolute path on the OpenClaw Gateway host;
 - for typed `inputs`, provide every `file`, `kind`, `role`, and `logicalPath` explicitly. `logicalPath` is a unique case-sensitive relative POSIX path in the request virtual root; never infer it from a physical parent directory, CWD, or sibling file;
 - use `source` for a primary document or standalone resource. Use `linked_resource`, `bibliography`, and `citation_style` only with `kind="resource"`;
-- for Markdown-to-DOCX, pass exactly one `neutral_document` with `kind="document"` and one `numbering_export_plan` with `kind="resource"`; do not add a `source` or any legacy sidecar role;
+- for an ordinary Markdown-to-DOCX conversion, supply the Markdown file as a `source` document and every referenced image as an explicit `linked_resource`. Proceed only if the installed DocWen advertises `convert.markdown_source.to_docx` for those inputs. Do not manufacture resolved-document JSON to work around an unavailable capability;
+- when the caller already supplies resolved-document JSON for `convert.markdown.to_docx`, pass exactly one `neutral_document` with `kind="document"` and one `numbering_export_plan` with `kind="resource"`; do not mix `source`, linked images, bibliography, citation styles, or extra inputs into this separate capability;
 - treat `outputDir` as one complete Artifact Bundle, not as a single output filename;
 - do not set `overwrite=true` unless the user explicitly authorized replacement of that exact directory;
 - preserve the caller's input order for merge operations;
