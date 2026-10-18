@@ -1038,7 +1038,7 @@ function boundedEnvironment(locale?: string): NodeJS.ProcessEnv {
   for (const key of bootstrapKeys) if (process.env[key]) env[key] = process.env[key];
   const profileKeys =
     process.platform === "win32"
-      ? ["USERPROFILE", "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH"]
+      ? ["USERNAME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH"]
       : ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"];
   for (const key of profileKeys) if (process.env[key]) env[key] = process.env[key];
   for (const key of ["DOCWEN_CONFIG_DIR", "DOCWEN_DATA_DIR", "DOCWEN_LOG_DIR"] as const) {

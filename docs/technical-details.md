@@ -13,7 +13,7 @@ Put these settings under `plugins.entries.docwen.config`. The [example configura
 | `readTimeoutMs`  | `30000`            | Time limit for read requests, in milliseconds                                            |
 | `writeTimeoutMs` | `600000`           | Overall time limit for preparing and running a document task, in milliseconds            |
 
-Both time limits accept values from `1000` to `1800000`. With `language: "auto"`, DocWen uses its default language. To request another language, use a code accepted by the [configuration schema](../src/config.ts) and included in your DocWen installation; for example, Arabic uses `ar_SA`. This setting controls DocWen output, templates, and task options where supported. The plugin's OpenClaw tool labels and descriptions remain in English.
+Both time limits accept values from `1000` to `1800000`. With `language: "auto"`, the plugin omits the task locale and DocWen uses its independently saved output language. To request another output language, use a code accepted by the [configuration schema](../src/config.ts) and included in your DocWen installation; for example, Arabic uses `ar_SA`. Explicit language applies only to task options that support it; it does not translate document body text, follow the Core UI language, or change a selected template's stable ID. Resource display names may be localized independently. The plugin's OpenClaw tool labels and descriptions remain in English.
 
 ## Process, protocol and filesystem boundaries
 
