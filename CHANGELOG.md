@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 3.1.0 - 2026-10-18
+
 - Accept DOC, WPS, RTF, ODT, OFD and XPS inputs using DocWen's declared media types; keep conversions and optimizations gated by the installed capabilities.
 - Return actionable setup errors with stable configuration codes when DocWenCLI is missing or incorrectly configured.
 - Clarify ordinary Markdown-to-Word inputs, simplify plugin descriptions and examples, and move language settings and package acceptance details out of the README.
