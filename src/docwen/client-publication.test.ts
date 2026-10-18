@@ -430,3 +430,35 @@ describe("write tool publication results", () => {
     expect(mocks.task).not.toHaveBeenCalled();
   });
 });
+
+describe("request locale propagation", () => {
+  it.each([true, false])(
+    "passes Arabic only when the selected capability accepts locale (%s)",
+    async (supportsLocale) => {
+      const root = await mkdtemp(path.join(tmpdir(), "docwen-arabic-"));
+      roots.push(root);
+      const source = path.join(root, "عربي.md");
+      await writeFile(source, "# مرحبا");
+      mocks.query.mockResolvedValue({
+        initialize: {},
+        result: {
+          capabilities: [
+            {
+              ...capability,
+              capability_id: "validate.markdown",
+              options_schema: {
+                properties: supportsLocale ? { locale: { type: "string", enum: ["ar_SA"] } } : {},
+              },
+            },
+          ],
+        },
+      });
+      mocks.task.mockImplementation(async ({ request }) => {
+        expect(request.options.locale).toBe(supportsLocale ? "ar_SA" : undefined);
+        throw new Error("captured Arabic plan");
+      });
+      await executeDocWenTool("docwen_validate_markdown", { file: source }, { language: "ar_SA" });
+      expect(mocks.task).toHaveBeenCalledOnce();
+    },
+  );
+});

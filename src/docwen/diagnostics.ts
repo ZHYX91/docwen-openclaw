@@ -136,7 +136,7 @@ export function diagnosticSummary({
   diagnosticCount?: number;
 } = {}): JsonObject {
   const machineError = error instanceof DocWenMachineError ? error : undefined;
-  // Binary resolver errors carry an exact local constant as their message.
+  // Recognize exact legacy local error constants as well as typed errors.
   // Matching the complete finite constant does not export arbitrary error text.
   const candidate = machineError?.code ?? (error instanceof Error ? error.message : undefined);
   const local =

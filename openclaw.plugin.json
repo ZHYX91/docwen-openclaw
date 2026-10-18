@@ -1,8 +1,8 @@
 {
   "id": "docwen",
   "name": "DocWen",
-  "description": "Operate DocWen through Machine Protocol v2 and verified Artifact Bundles.",
-  "version": "3.0.4",
+  "description": "Check and convert local documents, combine files, and split PDFs with DocWen.",
+  "version": "3.1.0",
   "skills": ["skills/docwen"],
   "activation": {
     "onStartup": false
@@ -31,6 +31,10 @@
           {
             "type": "string",
             "const": "en_US"
+          },
+          {
+            "type": "string",
+            "const": "ar_SA"
           },
           {
             "type": "string",
