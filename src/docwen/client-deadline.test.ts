@@ -1,6 +1,6 @@
 import { getEventListeners } from "node:events";
 import type * as FileSystem from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -60,7 +60,8 @@ afterEach(async () => {
 });
 
 async function input() {
-  const root = await mkdtemp(join(tmpdir(), "docwen-input-deadline-"));
+  // Input hashing uses realpath; match it even when TEMP uses a Windows short path or a symlink.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "docwen-input-deadline-")));
   roots.push(root);
   const file = join(root, "source.md");
   const binaryPath = join(root, process.platform === "win32" ? "DocWenCLI.exe" : "DocWenCLI");
