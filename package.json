@@ -41,6 +41,7 @@
     "lint": "eslint src scripts",
     "format:check": "prettier --check \"src/**/*.ts\" \"scripts/**/*.mjs\" \"*.{json,json5,md,mjs,ts}\" \"docs/**/*.md\" \"skills/**/*.md\" \".github/**/*.yml\"",
     "audit:prod": "node scripts/run-check.mjs audit",
+    "audit:all": "node scripts/run-check.mjs audit-all",
     "package:check": "node scripts/check-package.mjs",
     "acceptance:docwen-package": "node scripts/run-docwen-package-acceptance.mjs",
     "release:build": "node scripts/build-release.mjs",
@@ -53,6 +54,11 @@
   },
   "peerDependencies": {
     "openclaw": ">=2026.7.1-2 <2027.0.0"
+  },
+  "overrides": {
+    "openclaw@2026.9.9": {
+      "npm": "11.21.1"
+    }
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

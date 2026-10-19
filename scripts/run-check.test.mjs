@@ -31,7 +31,7 @@ describe("repository check npm dispatch", () => {
         ].join("\n"),
       );
       const results = [];
-      for (const event of ["prepack", "build", "audit:prod", "check:source"]) {
+      for (const event of ["prepack", "build", "audit:prod", "audit:all", "check:source"]) {
         const repo = join(work.root, event.replaceAll(":", "-"));
         const bin = join(repo, "node_modules", ".bin");
         mkdirSync(bin, { recursive: true });
@@ -102,7 +102,10 @@ describe("repository check npm dispatch", () => {
           event: "prepack",
           status: 0,
           hijacked: false,
-          audited: [["audit", "--omit=dev", "--audit-level=high"]],
+          audited: [
+            ["audit", "--omit=dev", "--audit-level=high"],
+            ["audit", "--include=dev", "--audit-level=moderate"],
+          ],
           compiled: true,
         },
         { event: "build", status: 0, hijacked: false, audited: [], compiled: true },
@@ -114,10 +117,20 @@ describe("repository check npm dispatch", () => {
           compiled: false,
         },
         {
+          event: "audit:all",
+          status: 0,
+          hijacked: false,
+          audited: [["audit", "--include=dev", "--audit-level=moderate"]],
+          compiled: false,
+        },
+        {
           event: "check:source",
           status: 0,
           hijacked: false,
-          audited: [["audit", "--omit=dev", "--audit-level=high"]],
+          audited: [
+            ["audit", "--omit=dev", "--audit-level=high"],
+            ["audit", "--include=dev", "--audit-level=moderate"],
+          ],
           compiled: false,
         },
       ]);
