@@ -494,7 +494,12 @@ export async function runDocWenMachineTask(options: {
       return {
         taskId,
         plan,
-        bundle: await validateArtifactBundle(params.bundle, request.output.staging_root.path, taskId),
+        bundle: await validateArtifactBundle(
+          params.bundle,
+          request.output.staging_root.path,
+          taskId,
+          options.signal,
+        ),
         diagnostics: objectArray(params.diagnostics, "terminal.diagnostics"),
         metrics: requiredObject(params.metrics, "terminal.metrics"),
         progress,
@@ -507,16 +512,19 @@ async function withSession<T>(
   options: { binaryPath: string; timeoutMs: number; signal?: AbortSignal; locale?: string },
   body: (session: MachineSession, setTaskId: (taskId: string) => void) => Promise<T>,
 ): Promise<T> {
+  const cancelled = () =>
+    options.signal?.reason instanceof DocWenMachineError &&
+    options.signal.reason.code === "docwen_machine_timeout"
+      ? options.signal.reason
+      : new DocWenMachineError("docwen_machine_cancelled", "DocWen operation was cancelled.");
   if (options.signal?.aborted) {
-    throw new DocWenMachineError("docwen_machine_cancelled", "DocWen operation was cancelled before start.");
+    throw cancelled();
   }
   const session = new MachineSession(options.binaryPath, options.locale);
   let taskId: string | null = null;
   let timedOut = false;
   let abortHandled = false;
   let cancellationTimer: ReturnType<typeof setTimeout> | null = null;
-  const cancelled = () =>
-    new DocWenMachineError("docwen_machine_cancelled", "DocWen operation was cancelled.");
   const timer = setTimeout(() => {
     timedOut = true;
     session.fail(
@@ -531,7 +539,7 @@ async function withSession<T>(
     abortHandled = true;
     clearTimeout(timer);
     const failure = cancelled();
-    if (taskId) {
+    if (taskId && failure.code !== "docwen_machine_timeout") {
       try {
         session.requestCancellation(taskId);
       } catch {
@@ -590,7 +598,9 @@ export async function validateArtifactBundle(
   value: unknown,
   stagingRoot: string,
   taskId: string,
+  signal?: AbortSignal,
 ): Promise<ValidatedArtifactBundle> {
+  signal?.throwIfAborted();
   const bundle = requiredObject(value, "bundle");
   validateBundleFields(bundle, protocolError);
   if (bundle.schema !== "docwen.artifact_bundle.v3" || bundle.task_id !== taskId) {
@@ -619,6 +629,7 @@ export async function validateArtifactBundle(
   const artifactLocators = new Set<string>();
   const artifacts: ValidatedBundleArtifact[] = [];
   for (const raw of rawArtifacts) {
+    signal?.throwIfAborted();
     const artifactId = requiredString(raw.artifact_id, "artifact.artifact_id");
     if (artifactIds.has(artifactId)) throw integrityError("Artifact Bundle contains duplicate artifact ids.");
     artifactIds.add(artifactId);
@@ -654,7 +665,7 @@ export async function validateArtifactBundle(
     if (!isContainedPath(root, canonicalPath)) throw integrityError("Artifact resolves outside staging.");
     const actual = await stat(canonicalPath, { bigint: true });
     if (actual.size !== BigInt(sizeBytes)) throw integrityError("Artifact size does not match its manifest.");
-    const digest = await hashArtifactFile(canonicalPath, actual);
+    const digest = await hashArtifactFile(canonicalPath, actual, signal);
     if (digest !== sha256) throw integrityError("Artifact sha256 does not match its content.");
     artifacts.push({
       artifact_id: artifactId,
@@ -743,7 +754,12 @@ function enforceArtifactBundleLimits(rawArtifacts: JsonObject[]): void {
   }
 }
 
-async function hashArtifactFile(canonicalPath: string, expected: BigIntStats): Promise<string> {
+async function hashArtifactFile(
+  canonicalPath: string,
+  expected: BigIntStats,
+  signal?: AbortSignal,
+): Promise<string> {
+  signal?.throwIfAborted();
   const handle = await open(canonicalPath, "r");
   try {
     const before = await handle.stat({ bigint: true });
@@ -752,7 +768,8 @@ async function hashArtifactFile(canonicalPath: string, expected: BigIntStats): P
     }
     const hash = createHash("sha256");
     let bytesRead = 0;
-    for await (const chunk of handle.createReadStream({ autoClose: false })) {
+    for await (const chunk of handle.createReadStream({ autoClose: false, signal })) {
+      signal?.throwIfAborted();
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       if (bytesRead > MAX_ARTIFACT_BYTES - bytes.length) {
         throw outputLimitError("Artifact exceeds the per-file size limit while being read.", {
@@ -763,6 +780,7 @@ async function hashArtifactFile(canonicalPath: string, expected: BigIntStats): P
       hash.update(bytes);
     }
     const after = await handle.stat({ bigint: true });
+    signal?.throwIfAborted();
     if (!sameFileIdentity(before, after) || BigInt(bytesRead) !== expected.size) {
       throw integrityError("Artifact changed during integrity verification.");
     }

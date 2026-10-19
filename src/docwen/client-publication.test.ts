@@ -249,6 +249,38 @@ describe("write tool publication results", () => {
     expect(mocks.task).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["beforeSwap", "afterBackupMove"] as const)(
+    "retains the publication boundary when the overall deadline expires at %s",
+    async (phase) => {
+      const file = await input();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        mocks.hooks[phase] = async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+        };
+        const result = await executeDocWenTool(
+          "docwen_number_markdown",
+          { file, operation: "add", inPlace: true },
+          { writeTimeoutMs: 1000 },
+        );
+        expect(result).toMatchObject(
+          phase === "beforeSwap"
+            ? {
+                status: "failed",
+                error: { code: "docwen_machine_timeout" },
+                publication: { state: "not_published" },
+              }
+            : { status: "success", publication: { state: "published", retry: "do_not_retry" } },
+        );
+        expect(await readFile(file, "utf8")).toBe(phase === "beforeSwap" ? "# Original\n" : "# 1. Result\n");
+        expect(await readdir(path.dirname(file))).toEqual(["source.md"]);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("preserves a concurrent source edit made after the backup move", async () => {
     const file = await input();
     mocks.hooks.afterBackupMove = async (backup) => {

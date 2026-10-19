@@ -55,6 +55,7 @@ vi.mock("../process/runner.js", async (original) => {
 });
 
 import {
+  DocWenMachineError,
   runDocWenMachineQuery,
   runDocWenMachineQueries,
   runDocWenMachineTask,
@@ -716,6 +717,25 @@ describe("DocWen Machine Protocol client", () => {
     ).rejects.toMatchObject({ code: "docwen_machine_timeout", details: { timeoutMs: 20 } });
     expect(terminateProcessTreeMock).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["before_start", "query", "accepted"])(
+    "preserves an operation deadline across the Machine boundary: %s",
+    async (phase) => {
+      const controller = new AbortController();
+      const timeout = new DocWenMachineError("docwen_machine_timeout", "Whole operation timed out.", {
+        timeoutMs: 1000,
+      });
+      serverState.behavior = phase === "accepted" ? "hang_task" : "hang_initialize";
+      if (phase === "before_start") controller.abort(timeout);
+      const invocation = await taskInvocation(5000, controller.signal);
+      const operation = runDocWenMachineTask(invocation.options);
+      if (phase === "accepted") await vi.waitFor(() => expect(serverState.executeSeen).toBe(true));
+      if (phase !== "before_start") controller.abort(timeout);
+      await expect(operation).rejects.toBe(timeout);
+      expect(terminateProcessTreeMock).toHaveBeenCalledTimes(phase === "before_start" ? 0 : 1);
+      expect(serverState.cancelRequests).toBe(0);
+    },
+  );
 
   it.each([
     ["timeout", "docwen_machine_timeout"],

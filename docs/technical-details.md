@@ -17,6 +17,8 @@ Both time limits accept values from `1000` to `1800000`. With `language: "auto"`
 
 ## Process, protocol and filesystem boundaries
 
+The deadline starts when the tool is called, before executable lookup or input fingerprinting. `readTimeoutMs` covers `docwen_info`, `docwen_inspect` and `docwen_resources`; `writeTimeoutMs` covers every document task, including the read-only `docwen_validate_markdown` tool. Preparing multiple input files, checking existing outputs, running Machine and validating output before commit share that one budget. Starting Machine does not reset it. Input and pre-commit fingerprint streams stop on cancellation or expiry without waiting for EOF. An expired budget reports `docwen_machine_timeout`; caller cancellation reports `docwen_machine_cancelled`. Cooperative cancellation and process cleanup retain their separate bounded grace periods. Once output commit crosses its existing critical boundary, it finishes or restores the previous output even if the deadline expires during that work.
+
 The plugin starts a local DocWen process for each request. Read-only checks do not publish conversion output; write tools require an explicit destination. The following details explain the safeguards for file paths, process cleanup, and failed writes.
 
 - DocWen remains an independently installed product. The plugin requires DocWen 0.12.0 or later with Machine Protocol v2 and Artifact Bundle v3, and checks protocol compatibility separately from the product version. The plugin never downloads, installs, upgrades, or replaces DocWen.
@@ -57,6 +59,8 @@ The separate `convert.markdown.to_docx` capability is for integrations that alre
 ## Testing and package acceptance
 
 The source suite exercises cancellation at accepted/running protocol frames through the registered tool adapter and a controlled real subprocess. Publication tests inject cancellation and competing writes at the final filesystem commit, checking original bytes, reported publication state, lock release and temporary cleanup. These deterministic tests do not constitute live Gateway or LLM acceptance; record those host checks separately against the exact package.
+
+Preparation regressions also hold a real input's fingerprint stream open: cancellation and deadline expiry must close that stream before EOF, avoid starting Machine or reading later inputs, and preserve original files. Controlled-clock tests verify that preparation consumes the same budget as the subsequent Machine operation, that read and document-task budgets remain distinct, and that timers/listeners are disposed after completion. Publication tests check deadline expiry on both sides of the commit boundary.
 
 Run `npm run acceptance:docwen-package` to verify the packaged plugin against a packaged DocWen release. It requires the exact extracted `DocWenCLI` path plus its SHA-256, byte size, and stable version at least 0.12.0 through `DOCWEN_TEST_BINARY`, `DOCWEN_TEST_SHA256`, `DOCWEN_TEST_SIZE_BYTES`, and `DOCWEN_TEST_VERSION`. Set `DOCWEN_PLUGIN_CANDIDATE_DIR` to the absolute directory containing the plugin tarball, `CANDIDATE.json` and `SHA256SUMS` from the candidate workflow. The wrapper verifies and extracts that archive into owned temporary storage, loads its compiled client, and rechecks both candidates after the real Machine round trip. It uses an isolated DocWen profile and removes successful temporary work.
 
