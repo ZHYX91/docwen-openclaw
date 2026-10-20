@@ -2,7 +2,7 @@
   "id": "docwen",
   "name": "DocWen",
   "description": "Check and convert local documents, combine files, and split PDFs with DocWen.",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "skills": ["skills/docwen"],
   "activation": {
     "onStartup": false
