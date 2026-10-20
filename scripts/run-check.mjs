@@ -13,17 +13,23 @@ export function runRepositoryChecks({
 } = {}) {
   const commands =
     mode === "source"
-      ? ["lint", "format:check", "typecheck", "test:coverage", "audit:prod"].map((step) => ["run", step])
+      ? ["lint", "format:check", "typecheck", "test:coverage", "audit:prod", "audit:all"].map((step) => [
+          "run",
+          step,
+        ])
       : mode === "all"
         ? ["check:source", "build", "package:check"].map((step) => ["run", step])
         : mode === "build"
           ? [["run", "clean"]]
           : mode === "audit"
             ? [["audit", "--omit=dev", "--audit-level=high"]]
-            : undefined;
+            : mode === "audit-all"
+              ? [["audit", "--include=dev", "--audit-level=moderate"]]
+              : undefined;
   if (!commands) throw new Error("repository_check_mode_invalid");
   assertReleaseToolchain(npmCli);
-  if (mode !== "audit") verifyOpenClawBuildInput(repoRoot, { requireInstalled: true });
+  if (mode !== "audit" && mode !== "audit-all")
+    verifyOpenClawBuildInput(repoRoot, { requireInstalled: true });
   const run = (args) => {
     const result = spawnSync(process.execPath, args, {
       cwd: repoRoot,

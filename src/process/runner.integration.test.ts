@@ -28,7 +28,8 @@ async function live(pid: number): Promise<boolean> {
     const s = await readFile(`/proc/${pid}/stat`, "utf8");
     return !["Z", "X", "x"].includes(s.slice(s.lastIndexOf(")") + 2).split(" ")[0]!);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    // A process can disappear after /proc opens its stat file but before the read.
+    if (["ENOENT", "ESRCH"].includes((error as NodeJS.ErrnoException).code ?? "")) return false;
     throw error;
   }
 }
