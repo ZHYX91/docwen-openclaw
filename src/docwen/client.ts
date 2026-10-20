@@ -90,10 +90,29 @@ export async function executeDocWenTool(
   config: DocWenPluginConfig,
   signal?: AbortSignal,
 ): Promise<unknown> {
+  const writes = WRITE_TOOL_NAMES.some((name) => name === toolName);
+  const timeoutMs =
+    writes || toolName === "docwen_validate_markdown"
+      ? (config.writeTimeoutMs ?? 600_000)
+      : (config.readTimeoutMs ?? 30_000);
+  const operation = new AbortController();
+  const onAbort = () =>
+    operation.abort(new DocWenMachineError("docwen_machine_cancelled", "DocWen operation was cancelled."));
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) onAbort();
+  // One budget starts before input preparation and stays in force across the
+  // Machine session and pre-commit checks. Commit/cleanup retain their own boundary.
+  const timer = setTimeout(
+    () =>
+      operation.abort(
+        new DocWenMachineError("docwen_machine_timeout", "DocWen operation timed out.", { timeoutMs }),
+      ),
+    timeoutMs,
+  );
   try {
-    return await executeTool(toolName, params, config, signal);
+    operation.signal.throwIfAborted();
+    return await executeTool(toolName, params, config, operation.signal);
   } catch (error) {
-    const writes = WRITE_TOOL_NAMES.some((name) => name === toolName);
     const publication = writes
       ? error instanceof OutputPublicationError
         ? error.publication
@@ -119,6 +138,9 @@ export async function executeDocWenTool(
         ? { warnings: error.publication.warnings }
         : {}),
     };
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -129,6 +151,7 @@ async function executeTool(
   signal?: AbortSignal,
 ): Promise<unknown> {
   const binaryPath = await resolveDocWenBinary(config.binaryPath);
+  signal?.throwIfAborted();
   switch (toolName) {
     case "docwen_info":
       return info(binaryPath, config, signal);
@@ -228,7 +251,7 @@ async function inspect(
   config: DocWenPluginConfig,
   signal?: AbortSignal,
 ): Promise<JsonObject> {
-  const input = (await buildInputHandles([sourceInput(file)]))[0]!;
+  const input = (await buildInputHandles([sourceInput(file)], signal))[0]!;
   return (await query(binaryPath, "file/inspect", { input }, config, signal)).result;
 }
 
@@ -548,7 +571,7 @@ async function numberMarkdown(
       signal,
     );
   }
-  const preparedInputs = await buildInputHandles([input]);
+  const preparedInputs = await buildInputHandles([input], signal);
   await preflightPublication(file, "file", signal);
   const sourceVersion = {
     sizeBytes: preparedInputs[0]!.size_bytes,
@@ -644,11 +667,13 @@ async function executeTask(
   signal: AbortSignal | undefined,
   preparedInputs?: MachineInputHandle[],
 ): Promise<TaskExecution> {
-  const inputs = preparedInputs ?? (await buildInputHandles(inputSpecs));
+  const inputs = preparedInputs ?? (await buildInputHandles(inputSpecs, signal));
+  signal?.throwIfAborted();
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), "docwen-openclaw-task-"));
   const stagingRoot = path.join(temporaryRoot, "output");
   try {
     await mkdir(stagingRoot);
+    signal?.throwIfAborted();
     const completed = await runDocWenMachineTask({
       binaryPath,
       timeoutMs: config.writeTimeoutMs ?? 600_000,
@@ -880,13 +905,18 @@ function capabilityAcceptsInputs(
   });
 }
 
-async function buildInputHandles(inputSpecs: readonly InputSpec[]): Promise<MachineInputHandle[]> {
+async function buildInputHandles(
+  inputSpecs: readonly InputSpec[],
+  signal?: AbortSignal,
+): Promise<MachineInputHandle[]> {
+  signal?.throwIfAborted();
   if (inputSpecs.length === 0)
     throw new DocWenMachineError("docwen_invalid_parameter", "At least one input is required.");
   const handles: MachineInputHandle[] = [];
   const canonicalPaths = new Set<string>();
   const logicalPaths = new Set<string>();
   for (const [index, input] of inputSpecs.entries()) {
+    signal?.throwIfAborted();
     const file = input.file;
     validateInputKindRole(input.kind, input.role);
     const logicalPath = validateLogicalPath(input.logicalPath);
@@ -909,8 +939,9 @@ async function buildInputHandles(inputSpecs: readonly InputSpec[]): Promise<Mach
     if (!metadata.isFile() || metadata.isSymbolicLink()) {
       throw new DocWenMachineError("docwen_input_not_regular_file", "Input changed before fingerprinting.");
     }
-    const digest = await hashFile(canonicalPath);
+    const digest = await hashFile(canonicalPath, signal);
     const after = await lstat(canonicalPath, { bigint: true });
+    signal?.throwIfAborted();
     if (!samePathIdentity(after, pathIdentity(metadata))) {
       throw new DocWenMachineError(
         "docwen_source_changed",

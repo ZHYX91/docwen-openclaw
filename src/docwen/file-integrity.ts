@@ -2,6 +2,7 @@ import { createReadStream, type BigIntStats } from "node:fs";
 import { createHash } from "node:crypto";
 import { lstat, readdir, readlink } from "node:fs/promises";
 import * as path from "node:path";
+import { addAbortSignal } from "node:stream";
 import { DocWenMachineError } from "./machine-client.js";
 import { isErrno } from "./publication.js";
 
@@ -37,14 +38,18 @@ export async function assertPathIdentityUnchanged(
   }
 }
 
-export async function captureDirectorySnapshot(directory: string): Promise<DirectorySnapshot> {
+export async function captureDirectorySnapshot(
+  directory: string,
+  signal?: AbortSignal,
+): Promise<DirectorySnapshot> {
+  signal?.throwIfAborted();
   const before = await lstat(directory, { bigint: true });
   if (!before.isDirectory() || before.isSymbolicLink()) {
     throw new DocWenMachineError("docwen_output_not_directory", "Bundle output must be a real directory.");
   }
   const root = pathIdentity(before);
   const hash = createHash("sha256");
-  await hashDirectoryTree(directory, "", hash);
+  await hashDirectoryTree(directory, "", hash, signal);
   const after = await lstat(directory, { bigint: true });
   if (!samePathIdentity(after, root)) {
     throw new DocWenMachineError(
@@ -58,10 +63,11 @@ export async function captureDirectorySnapshot(directory: string): Promise<Direc
 export async function assertDirectorySnapshotUnchanged(
   directory: string,
   expected: DirectorySnapshot,
+  signal?: AbortSignal,
 ): Promise<void> {
   let current: DirectorySnapshot;
   try {
-    current = await captureDirectorySnapshot(directory);
+    current = await captureDirectorySnapshot(directory, signal);
   } catch (error) {
     if (isErrno(error, "ENOENT")) {
       throw new DocWenMachineError("docwen_output_changed", "The output target disappeared during commit.");
@@ -80,10 +86,13 @@ async function hashDirectoryTree(
   root: string,
   relativeDirectory: string,
   hash: ReturnType<typeof createHash>,
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
   const directory = relativeDirectory ? path.join(root, ...relativeDirectory.split("/")) : root;
   const names = (await readdir(directory)).sort((left, right) => left.localeCompare(right, "en"));
   for (const name of names) {
+    signal?.throwIfAborted();
     const relative = relativeDirectory ? `${relativeDirectory}/${name}` : name;
     const fullPath = path.join(root, ...relative.split("/"));
     const before = await lstat(fullPath, { bigint: true });
@@ -102,7 +111,7 @@ async function hashDirectoryTree(
     }
     if (before.isDirectory()) {
       hash.update(`D\0${relative}\0${identity.dev}\0${identity.ino}\0${identity.mode}\n`);
-      await hashDirectoryTree(root, relative, hash);
+      await hashDirectoryTree(root, relative, hash, signal);
       const after = await lstat(fullPath, { bigint: true });
       if (!samePathIdentity(after, identity)) {
         throw new DocWenMachineError(
@@ -113,7 +122,7 @@ async function hashDirectoryTree(
       continue;
     }
     if (before.isFile()) {
-      const digest = await hashFile(fullPath);
+      const digest = await hashFile(fullPath, signal);
       const after = await lstat(fullPath, { bigint: true });
       if (!samePathIdentity(after, identity)) {
         throw new DocWenMachineError(
@@ -150,6 +159,7 @@ export async function assertSourceVersionUnchanged(
   destination: string,
   before: BigIntStats,
   expected: { sizeBytes: number; sha256: string },
+  signal?: AbortSignal,
 ): Promise<PathIdentity> {
   if (before.size !== BigInt(expected.sizeBytes)) {
     throw new DocWenMachineError(
@@ -157,7 +167,7 @@ export async function assertSourceVersionUnchanged(
       "The source file changed while DocWen was preparing the in-place result.",
     );
   }
-  const digest = await hashFile(destination);
+  const digest = await hashFile(destination, signal);
   const after = await lstat(destination, { bigint: true });
   if (!samePathIdentity(after, pathIdentity(before)) || digest !== expected.sha256) {
     throw new DocWenMachineError(
@@ -172,6 +182,7 @@ export async function assertCopiedArtifact(
   file: string,
   expectedSize: number,
   expectedSha256: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const before = await lstat(file, { bigint: true });
   if (!before.isFile() || before.isSymbolicLink() || before.size !== BigInt(expectedSize)) {
@@ -180,7 +191,7 @@ export async function assertCopiedArtifact(
       "Copied artifact does not match its validated size.",
     );
   }
-  const digest = await hashFile(file);
+  const digest = await hashFile(file, signal);
   const after = await lstat(file, { bigint: true });
   if (!samePathIdentity(after, pathIdentity(before)) || digest !== expectedSha256) {
     throw new DocWenMachineError(
@@ -212,13 +223,20 @@ export function samePathIdentity(metadata: BigIntStats, expected: PathIdentity):
   );
 }
 
-export async function hashFile(file: string): Promise<string> {
+export async function hashFile(file: string, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   const hash = createHash("sha256");
-  await new Promise<void>((resolve, reject) => {
-    const stream = createReadStream(file);
-    stream.on("data", (chunk: Buffer) => hash.update(chunk));
-    stream.once("error", reject);
-    stream.once("end", resolve);
-  });
+  const stream = createReadStream(file);
+  if (signal) addAbortSignal(signal, stream);
+  try {
+    for await (const chunk of stream) {
+      signal?.throwIfAborted();
+      hash.update(chunk as Buffer);
+    }
+    signal?.throwIfAborted();
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw error;
+  }
   return hash.digest("hex");
 }
