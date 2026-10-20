@@ -58,7 +58,7 @@ export async function preflightOutputDirectory(
       "Bundle output directory already exists; set overwrite=true explicitly.",
     );
   }
-  const snapshot = existing ? await captureDirectorySnapshot(destination) : null;
+  const snapshot = existing ? await captureDirectorySnapshot(destination, signal) : null;
   await preflightPublication(destination, "directory", signal);
   return snapshot;
 }
@@ -75,7 +75,7 @@ export async function atomicCommitBundle(
   return withDestinationLock(destination, async (publication, assertHeld) => {
     const expected =
       initialDestination === undefined
-        ? await preflightOutputDirectory(destination, overwrite)
+        ? await preflightOutputDirectory(destination, overwrite, hooks.signal)
         : initialDestination;
     const preferred = preferredArtifact(bundle);
     const paths = bundle.artifacts.map(artifactCommitPath);
@@ -94,13 +94,14 @@ export async function atomicCommitBundle(
       async (candidate) => {
         await mkdir(candidate);
         for (const [index, artifact] of bundle.artifacts.entries()) {
+          hooks.signal?.throwIfAborted();
           const target = path.join(candidate, ...paths[index]!.split("/"));
           await mkdir(path.dirname(target), { recursive: true });
           await copyFile(artifact.absolutePath, target, fsConstants.COPYFILE_EXCL);
-          await assertCopiedArtifact(target, artifact.size_bytes, artifact.sha256);
+          await assertCopiedArtifact(target, artifact.size_bytes, artifact.sha256, hooks.signal);
         }
       },
-      expected ? (current) => assertDirectorySnapshotUnchanged(current, expected) : undefined,
+      expected ? (current) => assertDirectorySnapshotUnchanged(current, expected, hooks.signal) : undefined,
       expected ? (backup) => assertDirectorySnapshotUnchanged(backup, expected) : undefined,
     );
     return value;
@@ -122,9 +123,14 @@ export async function atomicReplaceFile(
     }
     const sourceVersion = expectedSource ?? {
       sizeBytes: Number(existing.size),
-      sha256: await hashFile(destination),
+      sha256: await hashFile(destination, hooks.signal),
     };
-    const expectedDestination = await assertSourceVersionUnchanged(destination, existing, sourceVersion);
+    const expectedDestination = await assertSourceVersionUnchanged(
+      destination,
+      existing,
+      sourceVersion,
+      hooks.signal,
+    );
     await commitTransaction(
       destination,
       "file",
@@ -134,7 +140,7 @@ export async function atomicReplaceFile(
       hooks,
       async (candidate) => {
         await copyFile(replacement, candidate, fsConstants.COPYFILE_EXCL);
-        await assertCopiedArtifact(candidate, expected.sizeBytes, expected.sha256);
+        await assertCopiedArtifact(candidate, expected.sizeBytes, expected.sha256, hooks.signal);
         await chmod(candidate, Number(existing.mode));
       },
       undefined,
@@ -174,6 +180,7 @@ async function commitTransaction(
     if (expected) {
       await assertPathIdentityUnchanged(destination, expected);
       await verifyExisting?.(destination);
+      hooks.signal?.throwIfAborted();
       phase = "backup";
       // backup is a fresh entry in our private transaction directory.
       await rename(destination, backup);
