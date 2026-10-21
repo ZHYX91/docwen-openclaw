@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 3.1.2 - 2026-10-21
+
+- Update the build SDK to OpenClaw 2026.10.5 and bind both package build declarations to the locked SDK version.
+- Carry forward the scoped npm dependency repair for the new SDK and update Vite's development dependency graph; both production and full dependency audits are clean.
+
+
 ## 3.1.0 - 2026-10-18
 
 - Accept DOC, WPS, RTF, ODT, OFD and XPS inputs using DocWen's declared media types; keep conversions and optimizations gated by the installed capabilities.
