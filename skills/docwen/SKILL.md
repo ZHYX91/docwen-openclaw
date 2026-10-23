@@ -16,6 +16,8 @@ Use the registered `docwen_*` tools. Never construct a shell command for DocWen.
 4. When a template is required, call `docwen_resources` with `kind="templates"` and pass the returned canonical resource `id` to `docwen_convert.template`. Never pass a file path or display name.
 5. `docwen_validate_markdown` is read-only: it returns the structured report and removes its request-owned staging area.
 
+In Code Mode, keep the full `docwen_info` result available for capability checks, but emit only the protocol, Bundle schema, health, and the selected capability's identity, availability, input shape, and option schema. Dumping the entire catalog can truncate other results from the same call. Prefer forward slashes in Windows host paths inside code so backslashes are not consumed as string escapes; the paths must still identify the caller's exact files.
+
 ## Write safety
 
 The following tools are optional because they persist or replace files:
