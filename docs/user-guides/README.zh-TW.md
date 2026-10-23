@@ -6,6 +6,8 @@
 
 使用此外掛前，請先另外安裝 **DocWen 0.12.0 或更新版本**。[下載外掛](https://github.com/ZHYX91/docwen-openclaw/releases)。
 
+**OpenClaw 版本要求：** Gateway／外掛 API 須符合 `>=2026.7.1-2 <2027.0.0`。安裝前請確認 Gateway 版本；建置時固定的 SDK 版本不表示必須執行相同版本的 Gateway。
+
 ## 可以做什麼
 
 - 查看檔案格式和可用的轉換方式。
@@ -38,6 +40,8 @@
 轉換工具需要輸入檔案的完整路徑，以及 Gateway 電腦上的輸出資料夾。請選擇新的資料夾：設定 `overwrite=true` 會取代既有輸出資料夾及其全部內容。只有明確指定 `inPlace=true` 時，Markdown 編號工具才會修改原始檔案。無法確認寫入結果時，外掛不會自動重試。常見操作請見[使用範例（簡體中文）](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/examples/basic.md)，設定說明請見[設定參考（英文）](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/technical-details.md#configuration)。
 
 在 Linux 上，如果外掛提示輸出檔案系統不受支援，請改用 Linux 原生檔案系統中的資料夾。WSL 掛載的 Windows 磁碟可能出現這種情況。
+
+**Markdown 裡的圖片：** 將 Markdown 轉成 Word 前，先用 `docwen_info` 確認有 `convert.markdown_source.to_docx` 功能。將 Markdown 當成 `source` 文件，每張引用圖片分別以 `linked_resource` 提供，並讓 `logicalPath` 與原文中的圖片路徑對應。實體檔案必須位於 Gateway 電腦；外掛不會自動搜尋相鄰圖片。只有所選功能明確支援時才加入 `keepImages`、`ocr` 或 `ocrLanguage`，不要為一般圖片嵌入自行加上這些選項。
 
 ## 運作方式
 
