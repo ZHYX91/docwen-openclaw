@@ -48,8 +48,18 @@ describe("package and manifest contracts", () => {
       openclaw: { compat: { pluginApi: string; minGatewayVersion: string } };
     };
     const locales = [
-      "en", "zh-CN", "zh-TW", "de-DE", "fr-FR", "es-ES",
-      "pt-BR", "ru-RU", "ja-JP", "ko-KR", "vi-VN", "ar",
+      "en",
+      "zh-CN",
+      "zh-TW",
+      "de-DE",
+      "fr-FR",
+      "es-ES",
+      "pt-BR",
+      "ru-RU",
+      "ja-JP",
+      "ko-KR",
+      "vi-VN",
+      "ar",
     ];
     expect(pkg.openclaw.compat.minGatewayVersion).toBe("2026.7.1-2");
     for (const locale of locales) {
