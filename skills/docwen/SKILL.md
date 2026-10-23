@@ -10,13 +10,15 @@ Use the registered `docwen_*` tools. Never construct a shell command for DocWen.
 
 ## Read first
 
-1. Call `docwen_info` to verify Machine Protocol v2, Artifact Bundle v3, capability availability, and health.
+1. Call `docwen_info` and wait for it to finish before other DocWen calls. Verify Machine Protocol v2, Artifact Bundle v3, capability availability, and health.
 2. Use `docwen_inspect` before choosing an operation for an unfamiliar input.
 3. Use `docwen_resources` when a format, template, optimization, or numbering scheme must be selected.
 4. When a template is required, call `docwen_resources` with `kind="templates"` and pass the returned canonical resource `id` to `docwen_convert.template`. Never pass a file path or display name.
 5. `docwen_validate_markdown` is read-only: it returns the structured report and removes its request-owned staging area.
 
-In Code Mode, keep the full `docwen_info` result available for capability checks, but emit only the protocol, Bundle schema, health, and the selected capability's identity, availability, input shape, and option schema. Dumping the entire catalog can truncate other results from the same call. Prefer forward slashes in Windows host paths inside code so backslashes are not consumed as string escapes; the paths must still identify the caller's exact files.
+Run DocWen tools sequentially, including read-only checks; do not batch them in `Promise.all`. Windows Store installations can reject overlapping process starts under separate ownership jobs. Keep the existing process cleanup protection and complete each check before starting the next DocWen tool.
+
+In Code Mode, keep the full `docwen_info` result available for capability checks, but emit only `machine_protocol`, `artifact_bundle_schema`, `health`, and the selected capability's identity, availability, input shape, and option schema. `capabilities` is an array; find the needed entry by `capability_id`. Dumping the entire catalog can truncate other results from the same call. Prefer forward slashes in Windows host paths inside code so backslashes are not consumed as string escapes; the paths must still identify the caller's exact files.
 
 ## Write safety
 
