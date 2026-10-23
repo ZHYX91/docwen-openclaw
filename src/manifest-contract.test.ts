@@ -43,6 +43,32 @@ describe("package and manifest contracts", () => {
     expect(pkg.openclaw.compat.pluginApi).toBe(">=2026.7.1-2 <2027.0.0");
   });
 
+  it("keeps all localized setup guides aligned with Gateway compatibility and linked-image admission", () => {
+    const pkg = JSON.parse(readFileSync(packagePath, "utf8")) as {
+      openclaw: { compat: { pluginApi: string; minGatewayVersion: string } };
+    };
+    const locales = [
+      "en", "zh-CN", "zh-TW", "de-DE", "fr-FR", "es-ES",
+      "pt-BR", "ru-RU", "ja-JP", "ko-KR", "vi-VN", "ar",
+    ];
+    expect(pkg.openclaw.compat.minGatewayVersion).toBe("2026.7.1-2");
+    for (const locale of locales) {
+      const filename = locale === "en" ? "../README.md" : `../docs/user-guides/README.${locale}.md`;
+      const readme = readFileSync(fileURLToPath(new URL(filename, import.meta.url)), "utf8");
+      for (const fact of [
+        pkg.openclaw.compat.pluginApi,
+        "convert.markdown_source.to_docx",
+        "docwen_info",
+        "linked_resource",
+        "logicalPath",
+        "keepImages",
+        "ocrLanguage",
+      ]) {
+        expect(readme, `Missing ${fact} in ${locale} user guide`).toContain(fact);
+      }
+    }
+  });
+
   it("keeps the public documentation on the frozen tool catalog", () => {
     for (const path of [readmePath, skillPath]) {
       const names = [...readFileSync(path, "utf8").matchAll(/\bdocwen_[a-z_]+\b/g)].map(([name]) => name);
