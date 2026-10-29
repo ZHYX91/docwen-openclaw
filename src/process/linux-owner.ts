@@ -14,7 +14,7 @@ import { join } from "node:path";
 import type { Duplex } from "node:stream";
 
 // Updated together with the reviewed native source, payload and build receipt.
-export const LINUX_OWNER_SHA256 = "6cdaabc6cfd844cbda6dcfee284e91b6320417830e1afae4366300a109125c51";
+export const LINUX_OWNER_SHA256 = "c393a16413522e530da56a4ef3feebd006388401ec8c9b4d739c565474bc7b86";
 export type LinuxOwner = Readonly<{
   kind: "linux-supervisor";
   completion: Promise<void>;

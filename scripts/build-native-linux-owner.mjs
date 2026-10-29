@@ -13,8 +13,9 @@ if (!output || !isAbsolute(output) || !existsSync(output))
 const binary = join(output, "linux-owner-x64");
 if (existsSync(binary)) throw new Error("Native output already exists.");
 const source = join(repository, "native", "linux-owner.c");
-const compiler = process.env.CC || "cc";
+const compiler = "musl-gcc";
 const args = [
+  "-static",
   "-std=c11",
   "-O2",
   "-Wall",
@@ -30,9 +31,24 @@ const built = spawnSync(compiler, args, { stdio: "inherit", shell: false });
 if (built.error) throw built.error;
 if (built.status !== 0) throw new Error("Linux process owner build failed.");
 const sha256 = (file) => createHash("sha256").update(readFileSync(file)).digest("hex");
+const payload = readFileSync(binary);
+const programOffset = Number(payload.readBigUInt64LE(32));
+const programSize = payload.readUInt16LE(54);
+for (let index = 0; index < payload.readUInt16LE(56); index++) {
+  const type = payload.readUInt32LE(programOffset + index * programSize);
+  if (type === 2 || type === 3) throw new Error("Linux owner must have no dynamic section or interpreter.");
+}
+const libc = spawnSync("dpkg-query", ["-W", "-f=${Version}", "musl-dev"], { encoding: "utf8", shell: false });
+if (libc.status !== 0) throw new Error("The recorded Ubuntu musl-dev build package is required.");
+const linkage = {
+  kind: "static-musl",
+  packageVersion: libc.stdout.trim(),
+  archiveSha256: sha256("/usr/lib/x86_64-linux-musl/libc.a"),
+  licenseSha256: sha256(join(repository, "native", "MUSL-LICENSE.txt")),
+};
 writeFileSync(
   join(output, "LINUX-OWNER-BUILD.json"),
-  `${JSON.stringify({ sourceSha256: sha256(source), binarySha256: sha256(binary), binaryBytes: readFileSync(binary).length, platform: "linux", arch: "x64", compiler: spawnSync(compiler, ["--version"], { encoding: "utf8", shell: false }).stdout.trim(), args }, null, 2)}\n`,
+  `${JSON.stringify({ sourceSha256: sha256(source), binarySha256: sha256(binary), binaryBytes: payload.length, platform: "linux", arch: "x64", linkage, compiler: spawnSync(compiler, ["--version"], { encoding: "utf8", shell: false }).stdout.trim(), args: args.map((value) => (value === source ? "native/linux-owner.c" : value === binary ? "<output>/linux-owner-x64" : value)) }, null, 2)}\n`,
   { flag: "wx" },
 );
 copyFileSync(source, join(output, "linux-owner.c"), constants.COPYFILE_EXCL);
