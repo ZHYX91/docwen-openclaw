@@ -1,11 +1,18 @@
 {
-  "sourceSha256": "497bc7b38debb3ba2cb3ceb1fde3175efb22f8d20f46b30fa42251f4c7f93258",
-  "binarySha256": "6cdaabc6cfd844cbda6dcfee284e91b6320417830e1afae4366300a109125c51",
-  "binaryBytes": 17144,
+  "sourceSha256": "d07cbec88bb96d597de06ae24a8c4f02730000fadeba0fe5f1e86973ead09b41",
+  "binarySha256": "c393a16413522e530da56a4ef3feebd006388401ec8c9b4d739c565474bc7b86",
+  "binaryBytes": 81352,
   "platform": "linux",
   "arch": "x64",
-  "compiler": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+  "linkage": {
+    "kind": "static-musl",
+    "packageVersion": "1.2.4-2",
+    "archiveSha256": "657e951f4c1d02ecac4e424222034c84a189f361b090f1284f255b3ac4480d5c",
+    "licenseSha256": "dd775ee077963e377a0ab31e1db27229442d5cfd18f183c2df1e6a552522f585"
+  },
+  "compiler": "x86_64-linux-gnu-gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
   "args": [
+    "-static",
     "-std=c11",
     "-O2",
     "-Wall",
@@ -13,8 +20,8 @@
     "-Werror",
     "-fno-ident",
     "-Wl,--build-id=none",
-    "/mnt/d/Projects/DocWen-Workspace/repos/docwen-openclaw/native/linux-owner.c",
+    "native/linux-owner.c",
     "-o",
-    "/mnt/d/Projects/DocWen-Workspace/.workspace/temp/oc-release-IVfbVJ/linux-owner-x64"
+    "<output>/linux-owner-x64"
   ]
 }
