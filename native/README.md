@@ -53,7 +53,6 @@ installed MSVC build tools (also present on the Windows CI runner). This peer
 closes the actual inherited read handle before replying, so query, task, and
 cancel tests exercise a real broken pipe. It is never included in the package.
 
-
 ## Linux Machine process ownership
 
 `linux-owner-x64` keeps signal authority inside two native subreapers outside
@@ -91,11 +90,17 @@ This is not a sandbox: simultaneous destruction of both supervisors and
 uninterruptible kernel tasks are outside its guarantee.
 Controlled Linux tests cover normal exit, real EPIPE, each supervisor's
 separate crash, descendant exit and survival of an unrelated sentinel.
-`node scripts/check-linux-owner-topology.mjs /absolute/owned/build-directory/linux-owner-x64` exercises cross-session children,
+`node scripts/check-linux-owner-topology.mjs /absolute/owned/build-directory/linux-owner-x64 /absolute/owned/diagnostics` exercises cross-session children,
 double-fork, root exit/crash and both supervisor crashes with real Linux
 process states and heartbeats. CI rebuilds the payload twice and compares both
-results with the checked-in ELF before running these cases.
-
+results with the checked-in ELF before running these cases. Metadata and owner-close
+waits each retain a six-second deadline. Normal exit and root-crash peers wait for
+an explicit release after the live baseline has been persisted; owned heartbeats
+and unrelated sentinels do not self-expire. Double-fork metadata becomes visible
+only after closing the complete file and atomically renaming it in the same directory.
+Per-case JSON and the exact generated peer source retain stage snapshots, bounded
+stdout/stderr/control, exit events, PID lifetimes/states, metadata/heartbeat bytes
+and original/cleanup errors. CI uploads these diagnostics even on failure.
 
 These helpers are packaging/runtime implementation details. The controlled
 process tests that exercise them are not substitutes for real DocWen, OpenClaw
@@ -109,7 +114,7 @@ requirements remain Linux x64, procfs and pidfd support; no runtime compiler is 
 The build receipt records the musl package version, libc archive hash and notice hash.
 The following upstream notices accompany the statically linked library.
 
-````text
+```text
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: musl
 Source: https://musl.libc.org/releases/
@@ -397,4 +402,4 @@ License: BSD-3-clause
  LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  SUCH DAMAGE.
-````
+```
