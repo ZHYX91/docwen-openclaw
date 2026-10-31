@@ -6,6 +6,8 @@ OpenClaw에서 DocWen으로 문서를 검사하고 파일을 변환하며 PDF와
 
 이 플러그인을 사용하려면 **DocWen 0.12.0 이상**을 별도로 설치하세요. [플러그인 다운로드](https://github.com/ZHYX91/docwen-openclaw/releases).
 
+**OpenClaw 버전 요구 사항:** Gateway 및 플러그인 API는 `>=2026.7.1-2 <2027.0.0` 범위여야 합니다. 설치 전에 Gateway 버전을 확인하세요. 빌드 SDK의 고정 버전과 실행 중인 Gateway 버전을 똑같이 맞출 필요는 없습니다.
+
 ## 할 수 있는 일
 
 - 파일 형식과 변환 가능한 형식을 확인합니다.
@@ -38,6 +40,8 @@ OpenClaw에서 DocWen으로 문서를 검사하고 파일을 변환하며 PDF와
 변환 도구에는 Gateway 컴퓨터에 있는 입력 파일의 전체 경로와 출력 폴더가 필요합니다. 새 폴더를 선택하세요. `overwrite=true`는 기존 출력 폴더 전체와 그 안의 모든 내용을 교체합니다. Markdown 제목 번호를 변경할 때 `inPlace=true`를 명시적으로 요청하면 원본 파일을 직접 업데이트할 수도 있습니다. 쓰기 결과를 확실히 알 수 없으면 플러그인은 자동으로 다시 시도하지 않습니다. 자주 사용하는 작업은 [사용 예제(중국어)](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/examples/basic.md)를, 설정 항목은 [설정 참고 문서(영어)](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/technical-details.md#configuration)를 확인하세요.
 
 Linux에서 출력 파일시스템을 지원하지 않는다는 메시지가 나오면 Linux 자체 파일시스템에 있는 폴더를 선택하세요. Windows 드라이브를 WSL에 마운트한 경우 이런 문제가 발생할 수 있습니다.
+
+**Markdown 이미지:** Markdown을 Word로 변환하기 전에 `docwen_info`로 `convert.markdown_source.to_docx` 지원 여부를 확인하세요. Markdown은 `source` 문서로, 각 참조 이미지는 별도의 `linked_resource`로 제공하고 `logicalPath`는 Markdown에 적힌 이미지 경로와 맞춰야 합니다. 실제 파일은 Gateway 컴퓨터에 있어야 하며 플러그인은 옆 폴더를 자동 검색하지 않습니다. `keepImages`, `ocr`, `ocrLanguage`는 선택한 기능에서 해당 옵션을 명시적으로 제공할 때만 지정하세요.
 
 ## 작동 방식
 

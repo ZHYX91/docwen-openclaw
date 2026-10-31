@@ -6,6 +6,8 @@ OpenClaw から DocWen を使って、文書のチェック、ファイルの変
 
 このプラグインを使う前に、**DocWen 0.12.0 以降**を別途インストールしてください。[プラグインをダウンロード](https://github.com/ZHYX91/docwen-openclaw/releases)。
 
+**OpenClaw の必要バージョン：** Gateway／プラグイン API は `>=2026.7.1-2 <2027.0.0` です。インストール前に Gateway のバージョンを確認してください。ビルド SDK の固定バージョンと Gateway の実行バージョンを一致させる必要はありません。
+
 ## できること
 
 - ファイル形式を調べ、変換できる形式を確認する。
@@ -38,6 +40,8 @@ OpenClaw から DocWen を使って、文書のチェック、ファイルの変
 変換ツールには、Gateway が動作するコンピューター上の入力ファイルのフルパスと、出力フォルダーが必要です。新しいフォルダーを選んでください。`overwrite=true` を指定すると、既存の出力フォルダーを中身ごとすべて置き換えます。Markdown の見出し番号を変更する場合は、`inPlace=true` を明示的に指定すると元のファイルも更新できます。書き込みが成功したかどうか判断できない場合、プラグインは自動で再試行しません。よく使う操作は[使用例（中国語）](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/examples/basic.md)、設定項目は[設定リファレンス（英語）](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/technical-details.md#configuration)を参照してください。
 
 Linux で出力先のファイルシステムが未対応と表示された場合は、Linux ネイティブのファイルシステム上にあるフォルダーを選んでください。Windows のドライブを WSL にマウントしている場合などに、この問題が起きることがあります。
+
+**Markdown の画像：** Markdown → Word では、まず `docwen_info` で `convert.markdown_source.to_docx` が使えるか確認してください。Markdown を `source` 文書として、参照する画像をそれぞれ `linked_resource` として渡し、`logicalPath` を本文に書かれた画像パスと一致させます。実ファイルは Gateway のコンピューター上に必要で、隣接フォルダーは自動検索されません。`keepImages`、`ocr`、`ocrLanguage` は、選んだ機能が明示的に対応する場合だけ指定してください。
 
 ## 仕組み
 
