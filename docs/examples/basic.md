@@ -60,6 +60,8 @@
 
 `file` 指向磁盘上的实际文件；`logicalPath` 用来对应文档里的相对链接。因此，图片的 `logicalPath` 要与 Markdown 中的 `assets/chart.png` 对得上，即使两个文件实际放在不同文件夹。每张引用的图片都需要单独列入 `inputs`；插件不会自动搜索相邻目录。
 
+这条 Markdown 转 Word 路线会嵌入显式提供的引用图片，不需要设置 `keepImages: true`。只有所选能力明确提供对应选项时，才传入 `keepImages`、`ocr` 或 `ocrLanguage`；“保留图片、不做 OCR”的普通请求按上面的最小参数即可完成，不要为此添加不受支持的选项，即使是 `ocr: false`。
+
 如果已有其他程序生成的解析文档 JSON 和编号计划 JSON，可以使用另一条 `convert.markdown.to_docx` 接口。它只接受一个 `neutral_document` 和一个 `numbering_export_plan`，不能与上面的 Markdown `source` 输入混用。普通 Markdown 文件使用前面的示例即可，详细字段见[技术参考](../technical-details.md#tool-write-behavior)。
 
 ## 找到结果
