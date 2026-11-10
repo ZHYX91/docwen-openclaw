@@ -23,7 +23,7 @@ describe("repository check npm dispatch", () => {
           'import process from "node:process";',
           "const args = process.argv.slice(2);",
           'if (args[0] === "--version") process.stdout.write("11.17.0\\n");',
-          'else if (args[0] === "audit") appendFileSync("audit.jsonl", JSON.stringify(args) + "\\n");',
+          'else if (args[0] === "audit") { appendFileSync("audit.jsonl", JSON.stringify(args) + "\\n"); if (args.includes("--json")) process.stdout.write(JSON.stringify({ auditReportVersion: 2, vulnerabilities: {}, metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 } } })); }',
           'else if (args[0] === "run") {',
           '  try { await runScript({ event: args[1], path: process.cwd(), pkg: JSON.parse(readFileSync("package.json", "utf8")), env: { ...process.env, npm_execpath: fileURLToPath(import.meta.url), npm_node_execpath: process.execPath }, stdio: "inherit" }); }',
           "  catch (error) { process.exitCode = Number.isInteger(error.code) ? error.code : 1; }",
@@ -39,7 +39,15 @@ describe("repository check npm dispatch", () => {
         mkdirSync(join(repo, "node_modules", "typescript", "bin"), { recursive: true });
         mkdirSync(join(repo, "scripts"));
         const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-        for (const leaf of ["lint", "format:check", "typecheck", "test:coverage", "clean", "package:check"]) {
+        for (const leaf of [
+          "lint",
+          "format:check",
+          "typecheck",
+          "test:coverage",
+          "test:audit-policy",
+          "clean",
+          "package:check",
+        ]) {
           pkg.scripts[leaf] = `node scripts/probe.mjs ${leaf}`;
         }
         writeFileSync(join(repo, "package.json"), JSON.stringify(pkg));
@@ -104,7 +112,7 @@ describe("repository check npm dispatch", () => {
           hijacked: false,
           audited: [
             ["audit", "--omit=dev", "--audit-level=high"],
-            ["audit", "--include=dev", "--audit-level=moderate"],
+            ["audit", "--include=dev", "--audit-level=moderate", "--json"],
           ],
           compiled: true,
         },
@@ -120,7 +128,7 @@ describe("repository check npm dispatch", () => {
           event: "audit:all",
           status: 0,
           hijacked: false,
-          audited: [["audit", "--include=dev", "--audit-level=moderate"]],
+          audited: [["audit", "--include=dev", "--audit-level=moderate", "--json"]],
           compiled: false,
         },
         {
@@ -129,7 +137,7 @@ describe("repository check npm dispatch", () => {
           hijacked: false,
           audited: [
             ["audit", "--omit=dev", "--audit-level=high"],
-            ["audit", "--include=dev", "--audit-level=moderate"],
+            ["audit", "--include=dev", "--audit-level=moderate", "--json"],
           ],
           compiled: false,
         },
