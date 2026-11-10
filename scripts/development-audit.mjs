@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import console from "node:console";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";

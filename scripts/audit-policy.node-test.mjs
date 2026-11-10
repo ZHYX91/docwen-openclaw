@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { URL } from "node:url";
 import { assessDevelopmentAudit } from "./audit-policy.mjs";
+const { structuredClone } = globalThis;
 
 const lock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));
 const now = Date.parse("2026-11-10T00:00:00Z");
