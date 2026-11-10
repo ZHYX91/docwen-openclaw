@@ -6,6 +6,8 @@ Mit DocWen können Sie in OpenClaw Dokumente prüfen, Dateien konvertieren sowie
 
 Installieren Sie **DocWen 0.12.0 oder neuer** separat, bevor Sie dieses Plugin verwenden. [Plugin herunterladen](https://github.com/ZHYX91/docwen-openclaw/releases).
 
+**OpenClaw-Voraussetzung:** Gateway und Plugin-API müssen `>=2026.7.1-2 <2027.0.0` erfüllen. Prüfen Sie die Gateway-Version vor der Installation; die beim Bau festgelegte SDK-Version ist keine Pflichtversion für den Gateway-Betrieb.
+
 ## Was Sie damit tun können
 
 - Das Format einer Datei prüfen und verfügbare Konvertierungen anzeigen.
@@ -38,6 +40,8 @@ Werkzeuge, die Dateien erstellen oder ändern, sind **standardmäßig deaktivier
 Konvertierungswerkzeuge benötigen vollständige Eingabepfade und einen Ausgabeordner auf dem Gateway-Computer. Wählen Sie einen neuen Ordner: `overwrite=true` ersetzt den gesamten vorhandenen Ausgabeordner einschließlich seines Inhalts. Die Markdown-Nummerierung kann auch die Originaldatei ändern, wenn ausdrücklich `inPlace=true` angefordert wird. Ist unklar, ob ein Schreibvorgang erfolgreich war, wiederholt das Plugin ihn nicht automatisch. Häufige Aufgaben finden Sie in den [Beispielen (Chinesisch)](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/examples/basic.md), Einstellungen in der [Konfigurationsreferenz (Englisch)](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/technical-details.md#configuration).
 
 Wenn das Plugin unter Linux meldet, dass das Dateisystem des Ausgabeordners nicht unterstützt wird, wählen Sie einen Ordner auf einem nativen Linux-Dateisystem. Dies kann bei Windows-Laufwerken auftreten, die in WSL eingebunden sind.
+
+**Bilder in Markdown:** Prüfen Sie vor Markdown → Word mit `docwen_info`, ob `convert.markdown_source.to_docx` verfügbar ist. Geben Sie Markdown als `source`-Dokument und jedes eingebundene Bild einzeln als `linked_resource` an. Der `logicalPath` muss dem Bildpfad im Markdown entsprechen; die Dateien müssen auf dem Gateway-Rechner liegen. Das Plugin sucht nicht in benachbarten Ordnern. Verwenden Sie `keepImages`, `ocr` und `ocrLanguage` nur, wenn die gewählte Funktion diese Optionen tatsächlich anbietet.
 
 ## So funktioniert es
 

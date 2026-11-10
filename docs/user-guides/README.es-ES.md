@@ -6,6 +6,8 @@ Usa DocWen desde OpenClaw para revisar documentos, convertir archivos y trabajar
 
 Instala **DocWen 0.12.0 o posterior** por separado antes de usar este plugin. [Descargar el plugin](https://github.com/ZHYX91/docwen-openclaw/releases).
 
+**Requisito de OpenClaw:** Gateway y API del complemento `>=2026.7.1-2 <2027.0.0`. Comprueba la versión de Gateway antes de instalar; la versión del SDK fijada para compilar no obliga a ejecutar exactamente esa versión de Gateway.
+
 ## Qué puedes hacer
 
 - Comprobar el formato de un archivo y ver las conversiones disponibles.
@@ -38,6 +40,8 @@ Las herramientas que crean o modifican archivos están **desactivadas por defect
 Las herramientas de conversión necesitan las rutas completas de los archivos de entrada y una carpeta de salida en el equipo del Gateway. Elige una carpeta nueva: `overwrite=true` sustituye toda la carpeta de salida existente y su contenido. La numeración de Markdown también puede modificar el archivo original si se solicita explícitamente `inPlace=true`. Si el resultado de una escritura es incierto, el plugin no la reintenta automáticamente. Consulta los [ejemplos (en chino)](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/examples/basic.md) para tareas habituales y la [referencia de configuración (en inglés)](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/technical-details.md#configuration) para los ajustes.
 
 En Linux, si el plugin indica que el sistema de archivos de salida no es compatible, elige una carpeta en un sistema de archivos nativo de Linux. Esto puede ocurrir con unidades de Windows montadas en WSL.
+
+**Imágenes en Markdown:** antes de convertir Markdown a Word, comprueba con `docwen_info` que esté disponible `convert.markdown_source.to_docx`. Envía Markdown como documento `source` y cada imagen enlazada por separado como `linked_resource`; su `logicalPath` debe coincidir con el destino escrito en Markdown. Todos los archivos físicos deben estar en el equipo Gateway; el complemento no busca imágenes en carpetas vecinas. Usa `keepImages`, `ocr` u `ocrLanguage` solo si la capacidad elegida admite realmente esas opciones.
 
 ## Cómo funciona
 

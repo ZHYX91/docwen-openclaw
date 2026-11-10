@@ -12,6 +12,7 @@ describe("native process ownership assets", () => {
       binaryBytes: number;
       platform: string;
       arch: string;
+      linkage: { kind: string; licenseSha256: string };
     };
     const source = await readFile("native/linux-owner.c");
     const binary = await readFile("native/linux-owner-x64");
@@ -25,6 +26,16 @@ describe("native process ownership assets", () => {
     expect(sha256(binary)).toBe(LINUX_OWNER_SHA256);
     expect(binary.subarray(0, 6)).toEqual(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]));
     expect(binary.readUInt16LE(18)).toBe(62);
+    const license = await readFile("native/MUSL-LICENSE.txt", "utf8");
+    expect(record.linkage).toMatchObject({
+      kind: "static-musl",
+      licenseSha256: sha256(Buffer.from(license)),
+    });
+    expect(await readFile("native/README.md", "utf8")).toContain(license);
+    const offset = Number(binary.readBigUInt64LE(32));
+    for (let index = 0; index < binary.readUInt16LE(56); index++) {
+      expect([2, 3]).not.toContain(binary.readUInt32LE(offset + index * binary.readUInt16LE(54)));
+    }
   });
   it("binds the checked-in Windows controller to its reviewed source and provenance", async () => {
     const record = JSON.parse(await readFile("native/WINDOWS-BUILD.json", "utf8")) as {

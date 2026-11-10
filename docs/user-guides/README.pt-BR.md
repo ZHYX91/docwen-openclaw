@@ -6,6 +6,8 @@ Use o DocWen pelo OpenClaw para revisar documentos, converter arquivos e trabalh
 
 Instale **DocWen 0.12.0 ou posterior** separadamente antes de usar este plugin. [Baixar o plugin](https://github.com/ZHYX91/docwen-openclaw/releases).
 
+**Requisito do OpenClaw:** Gateway e API do plugin `>=2026.7.1-2 <2027.0.0`. Confira a versão do Gateway antes de instalar; a versão fixada do SDK de desenvolvimento não obriga a executar exatamente esse Gateway.
+
 ## O que você pode fazer
 
 - Verificar o formato de um arquivo e consultar as conversões disponíveis.
@@ -38,6 +40,8 @@ As ferramentas que criam ou alteram arquivos ficam **desativadas por padrão**. 
 As ferramentas de conversão precisam dos caminhos completos dos arquivos de entrada e de uma pasta de saída no computador do Gateway. Escolha uma pasta nova: `overwrite=true` substitui toda a pasta de saída existente e seu conteúdo. A numeração de Markdown também pode alterar o arquivo original quando `inPlace=true` é solicitado explicitamente. Se o resultado de uma escrita for incerto, o plugin não tentará executá-la de novo automaticamente. Consulte os [exemplos (em chinês)](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/examples/basic.md) para tarefas comuns e a [referência de configuração (em inglês)](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/technical-details.md#configuration) para os ajustes.
 
 No Linux, se o plugin informar que o sistema de arquivos de saída não é compatível, escolha uma pasta em um sistema de arquivos nativo do Linux. Isso pode acontecer com unidades do Windows montadas no WSL.
+
+**Imagens em Markdown:** antes de converter Markdown para Word, confira em `docwen_info` se `convert.markdown_source.to_docx` está disponível. Envie o Markdown como documento `source` e cada imagem referenciada separadamente como `linked_resource`, com `logicalPath` correspondente ao caminho escrito no Markdown. Todos os arquivos devem estar no computador Gateway; o plugin não procura imagens em pastas vizinhas. Só use `keepImages`, `ocr` ou `ocrLanguage` quando a capacidade selecionada oferecer essas opções.
 
 ## Como funciona
 

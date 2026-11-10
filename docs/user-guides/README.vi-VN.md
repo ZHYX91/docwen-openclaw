@@ -6,6 +6,8 @@ Bạn có thể dùng DocWen từ OpenClaw để kiểm tra tài liệu, chuyể
 
 Trước khi sử dụng plugin này, hãy cài riêng **DocWen 0.12.0 trở lên**. [Tải plugin](https://github.com/ZHYX91/docwen-openclaw/releases).
 
+**Yêu cầu phiên bản OpenClaw:** Gateway và API plugin phải thuộc `>=2026.7.1-2 <2027.0.0`. Hãy kiểm tra phiên bản Gateway trước khi cài; phiên bản SDK cố định lúc xây dựng không yêu cầu chạy đúng phiên bản Gateway đó.
+
 ## Bạn có thể làm gì?
 
 - Kiểm tra định dạng của tệp và xem có thể chuyển đổi sang những định dạng nào.
@@ -38,6 +40,8 @@ Các công cụ ghi hoặc thay đổi tệp **mặc định bị tắt**. Bạn
 Các công cụ chuyển đổi cần đường dẫn đầy đủ đến tệp đầu vào và một thư mục đầu ra trên máy tính chạy Gateway. Hãy chọn thư mục mới: `overwrite=true` thay thế toàn bộ thư mục đầu ra hiện có cùng mọi nội dung bên trong. Công cụ đánh số tiêu đề Markdown cũng có thể cập nhật tệp gốc khi bạn yêu cầu rõ ràng bằng `inPlace=true`. Nếu chưa thể xác định thao tác ghi đã thành công hay chưa, plugin sẽ không tự động thử lại. Xem [các ví dụ (tiếng Trung)](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/examples/basic.md) để biết cách thực hiện những tác vụ thường gặp và [tài liệu cấu hình (tiếng Anh)](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/technical-details.md#configuration) để biết các thiết lập.
 
 Trên Linux, nếu plugin báo không hỗ trợ hệ thống tệp ở nơi lưu kết quả, hãy chọn một thư mục trên hệ thống tệp của Linux. Lỗi này có thể xảy ra với các ổ đĩa Windows được gắn vào WSL.
+
+**Ảnh trong Markdown:** trước khi chuyển Markdown sang Word, dùng `docwen_info` kiểm tra có `convert.markdown_source.to_docx`. Cung cấp Markdown dưới dạng tài liệu `source`, còn mỗi ảnh được tham chiếu là một `linked_resource` riêng; `logicalPath` phải khớp đường dẫn viết trong Markdown. Tệp thật phải nằm trên máy Gateway; plugin không tự tìm ảnh trong thư mục lân cận. Chỉ thêm `keepImages`, `ocr` hoặc `ocrLanguage` nếu khả năng đã chọn thật sự hỗ trợ các tùy chọn đó.
 
 ## Cách hoạt động
 

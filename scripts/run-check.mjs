@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { verifyOpenClawBuildInput } from "./openclaw-build.mjs";
 import { assertReleaseToolchain } from "./release-package-lib.mjs";
+import { runDevelopmentAudit } from "./development-audit.mjs";
 
 export function runRepositoryChecks({
   repoRoot = process.cwd(),
@@ -13,10 +14,15 @@ export function runRepositoryChecks({
 } = {}) {
   const commands =
     mode === "source"
-      ? ["lint", "format:check", "typecheck", "test:coverage", "audit:prod", "audit:all"].map((step) => [
-          "run",
-          step,
-        ])
+      ? [
+          "lint",
+          "format:check",
+          "typecheck",
+          "test:coverage",
+          "test:audit-policy",
+          "audit:prod",
+          "audit:all",
+        ].map((step) => ["run", step])
       : mode === "all"
         ? ["check:source", "build", "package:check"].map((step) => ["run", step])
         : mode === "build"
@@ -28,6 +34,7 @@ export function runRepositoryChecks({
               : undefined;
   if (!commands) throw new Error("repository_check_mode_invalid");
   assertReleaseToolchain(npmCli);
+  if (mode === "audit-all") return runDevelopmentAudit(repoRoot, npmCli, environment);
   if (mode !== "audit" && mode !== "audit-all")
     verifyOpenClawBuildInput(repoRoot, { requireInstalled: true });
   const run = (args) => {

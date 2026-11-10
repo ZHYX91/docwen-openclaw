@@ -10,18 +10,27 @@ import { spawnOwnedMachineProcess, terminateProcessTree } from "./runner.js";
 const peer = `#!/usr/bin/python3
 import json, os, sys, time
 mode = os.environ['DOCWEN_OWNER_TEST_MODE']
+deadline = time.monotonic() + 15
+ready_read, ready_write = os.pipe()
 helper = os.fork()
 if helper == 0:
+    os.close(ready_read)
+    os.setsid()
     null = os.open('/dev/null', os.O_RDWR)
     for fd in (0,1,2): os.dup2(null, fd)
     os.close(null)
-    while True: time.sleep(10)
+    os.write(ready_write,b'1')
+    os.close(ready_write)
+    while time.monotonic() < deadline: time.sleep(.1)
+os.close(ready_write)
+assert os.read(ready_read,1) == b'1'
+os.close(ready_read)
 if mode == 'epipe': os.close(0)
 print(json.dumps({'root':os.getpid(),'guard':os.getppid(),'helper':helper}),flush=True)
 if mode == 'normal':
     sys.stdin.buffer.read()
     os._exit(0)
-while True: time.sleep(10)
+while time.monotonic() < deadline: time.sleep(.1)
 `;
 async function live(pid: number): Promise<boolean> {
   try {
@@ -45,7 +54,11 @@ it.skipIf(process.platform !== "linux").each(["normal", "epipe", "wrapper-crash"
     const root = await mkdtemp(join(tmpdir(), "docwen-owned-process-"));
     const script = join(root, "peer.py");
     await writeFile(script, peer, { mode: 0o700 });
-    const sentinel = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+    const sentinel = spawn(
+      process.execPath,
+      ["-e", "setInterval(()=>{},1000);setTimeout(()=>process.exit(0),20000)"],
+      { stdio: "ignore" },
+    );
     const owned = spawnOwnedMachineProcess(script, {
       cwd: root,
       env: { ...process.env, DOCWEN_OWNER_TEST_MODE: mode },
@@ -73,6 +86,11 @@ it.skipIf(process.platform !== "linux").each(["normal", "epipe", "wrapper-crash"
           owned.child.once("error", reject);
         }),
       );
+      expect(await live(meta.helper)).toBe(true);
+      const escapedStat = await readFile(`/proc/${meta.helper}/stat`, "utf8");
+      const escapedFields = escapedStat.slice(escapedStat.lastIndexOf(")") + 2).split(" ");
+      expect(Number(escapedFields[2])).toBe(meta.helper);
+      expect(Number(escapedFields[3])).toBe(meta.helper);
       if (mode === "normal") owned.child.stdin.end();
       if (mode === "epipe") {
         const broken = new Promise<string | undefined>((resolve) =>

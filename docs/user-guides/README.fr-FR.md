@@ -6,6 +6,8 @@ Utilisez DocWen depuis OpenClaw pour vérifier des documents, convertir des fich
 
 Installez séparément **DocWen 0.12.0 ou ultérieur** avant d’utiliser ce plugin. [Télécharger le plugin](https://github.com/ZHYX91/docwen-openclaw/releases).
 
+**Version d’OpenClaw requise :** la Gateway et l’API du plugin doivent respecter `>=2026.7.1-2 <2027.0.0`. Vérifiez la version de la Gateway avant l’installation ; la version du SDK figée pour la compilation n’impose pas une version identique de la Gateway.
+
 ## Ce que vous pouvez faire
 
 - Vérifier le format d’un fichier et voir les conversions disponibles.
@@ -38,6 +40,8 @@ Les outils qui créent ou modifient des fichiers sont **désactivés par défaut
 Les outils de conversion ont besoin des chemins complets des fichiers d’entrée et d’un dossier de sortie sur l’ordinateur du Gateway. Choisissez un nouveau dossier : `overwrite=true` remplace l’intégralité du dossier de sortie existant et de son contenu. La numérotation Markdown peut aussi modifier le fichier original si `inPlace=true` est explicitement demandé. Si le résultat d’une écriture est incertain, le plugin ne la relance pas automatiquement. Consultez les [exemples (en chinois)](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/examples/basic.md) pour les tâches courantes et la [référence de configuration (en anglais)](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/technical-details.md#configuration) pour les réglages.
 
 Sous Linux, si le plugin indique que le système de fichiers de sortie n’est pas pris en charge, choisissez un dossier sur un système de fichiers Linux natif. Cela peut se produire avec des disques Windows montés dans WSL.
+
+**Images dans Markdown :** avant Markdown → Word, vérifiez la disponibilité de `convert.markdown_source.to_docx` avec `docwen_info`. Fournissez le Markdown comme document `source` et chaque image liée séparément comme `linked_resource`. Son `logicalPath` doit correspondre au chemin écrit dans le Markdown, et tous les fichiers doivent se trouver sur l’ordinateur de la Gateway. Le plugin ne recherche pas d’images dans les dossiers voisins. Ne passez `keepImages`, `ocr` ou `ocrLanguage` que si la capacité choisie propose réellement ces options.
 
 ## Fonctionnement
 

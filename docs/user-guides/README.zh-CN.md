@@ -6,6 +6,8 @@
 
 使用本插件前，请先单独安装 **DocWen 0.12.0 或更高版本**。[下载插件](https://github.com/ZHYX91/docwen-openclaw/releases)。
 
+**OpenClaw 版本要求：** Gateway／插件 API 需满足 `>=2026.7.1-2 <2027.0.0`。安装前请核对 Gateway 版本；构建时固定的 SDK 版本不代表必须运行同一版本的 Gateway。
+
 ## 能做什么
 
 - 查看文件格式和可用的转换方式。
@@ -38,6 +40,8 @@
 转换工具需要输入文件的完整路径，以及 Gateway 电脑上的输出文件夹。请选择一个新文件夹：设置 `overwrite=true` 会替换已有输出文件夹及其全部内容。只有明确指定 `inPlace=true` 时，Markdown 编号工具才会修改原文件。写入结果无法确认时，插件不会自动重试。常见操作见[用法示例（中文）](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/examples/basic.md)，设置说明见[配置参考（英文）](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/technical-details.md#configuration)。
 
 在 Linux 上，如果插件提示输出文件系统不受支持，请改用 Linux 原生文件系统中的文件夹。WSL 挂载的 Windows 盘可能出现这种情况。
+
+**Markdown 中的图片：** 将 Markdown 转为 Word 前，先通过 `docwen_info` 确认存在 `convert.markdown_source.to_docx` 能力。Markdown 作为 `source` 文档提交，每张引用图片都要单独作为 `linked_resource` 提交，并让 `logicalPath` 对应原文中的图片路径。物理文件须位于 Gateway 电脑；插件不会自动寻找相邻图片。只有所选能力明确提供对应选项时才添加 `keepImages`、`ocr` 或 `ocrLanguage`，普通嵌入图片不需要擅自添加这些参数。
 
 ## 工作方式
 

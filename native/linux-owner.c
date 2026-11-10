@@ -1,5 +1,5 @@
-/* Linux-only Machine owner. No process-name/procfs scans and no detached PID
- * authority crosses the Node boundary. See native/README.md for invariants. */
+/* Linux-only Machine owner. Only this subreaper's kernel wait-children are
+ * signal targets; no process-name search or PID authority crosses Node. */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -53,24 +54,63 @@ static int gate(int fd, int timeout_ms) {
     return result > 0 && read(fd, &byte, 1) == 1 && byte == 'A';
 }
 
+static volatile sig_atomic_t parent_lost = 0;
 static void guardian_lost_parent(int unused) {
     (void)unused;
-    /* Installed only after setsid: this process itself pins this group. */
-    (void)kill(0, SIGKILL);
-    _exit(125);
+    parent_lost = 1;
+}
+
+/* procfs supplies candidates, never signal authority. waitid proves direct
+ * parenthood without reaping; pidfd then pins the exact kernel process. Only
+ * this single-threaded parent can reap it. Recheck after opening the pidfd. */
+static void signal_wait_children(void) {
+    char filename[96];
+    snprintf(filename, sizeof(filename), "/proc/self/task/%ld/children", (long)getpid());
+    FILE *children = fopen(filename, "re");
+    if (!children) return;
+    long number;
+    while (fscanf(children, "%ld", &number) == 1) {
+        if (number <= 0 || number > 2147483647L) continue;
+        pid_t child = (pid_t)number;
+        int descriptor = (int)syscall(SYS_pidfd_open, child, 0);
+        if (descriptor < 0) continue;
+        siginfo_t observed = {0};
+        if (waitid(P_PID, (id_t)child, &observed, WEXITED | WNOHANG | WNOWAIT | __WALL) == 0
+            && observed.si_pid == 0) {
+            (void)syscall(SYS_pidfd_send_signal, descriptor, SIGKILL, NULL, 0);
+        }
+        close(descriptor);
+    }
+    fclose(children);
+}
+
+static int cleanup_children(void) {
+    long long deadline = now_ms() + CLEANUP_MS;
+    for (;;) {
+        signal_wait_children();
+        int result;
+        pid_t child;
+        do { child = waitpid(-1, &result, WNOHANG | __WALL); } while (child > 0 || (child < 0 && errno == EINTR));
+        /* An empty procfs listing is NOT completion: concurrent exit/adoption
+         * may omit a child. Only ECHILD proves the owned subtree was reaped. */
+        if (child < 0 && errno == ECHILD) return 1;
+        if (child < 0 || now_ms() >= deadline) return 0;
+        struct timespec pause_time = { .tv_sec = 0, .tv_nsec = 10000000 };
+        nanosleep(&pause_time, NULL);
+    }
 }
 
 static void guardian(int channel, pid_t parent, const char *target) {
     close(CONTROL);
-    if (setsid() < 0) _exit(125);
+    if (prctl(PR_SET_CHILD_SUBREAPER, 1) != 0) _exit(125);
     struct sigaction action = {0};
     action.sa_handler = guardian_lost_parent;
     sigemptyset(&action.sa_mask);
     if (sigaction(SIGUSR1, &action, NULL) != 0 || prctl(PR_SET_PDEATHSIG, SIGUSR1) != 0)
         _exit(125);
-    if (getppid() != parent) guardian_lost_parent(0);
+    if (getppid() != parent) _exit(125);
     if (send_report(channel, GROUP_READY, 0) != 0 || !gate(channel, START_MS))
-        guardian_lost_parent(0);
+        _exit(125);
 
     int start[2], exec_error[2];
     if (pipe2(start, O_CLOEXEC) != 0) _exit(125);
@@ -78,6 +118,7 @@ static void guardian(int channel, pid_t parent, const char *target) {
     pid_t root = fork();
     if (root < 0) _exit(125);
     if (root == 0) {
+        if (setsid() < 0) _exit(125);
         close(channel);
         close(start[1]);
         close(exec_error[0]);
@@ -106,25 +147,45 @@ static void guardian(int channel, pid_t parent, const char *target) {
     close(STDIN_FILENO);
     close(STDOUT_FILENO);
     close(STDERR_FILENO);
-    if (write(start[1], "A", 1) != 1) guardian_lost_parent(0);
+    if (write(start[1], "A", 1) != 1) parent_lost = 1;
     close(start[1]);
     int failure = 0;
-    ssize_t count;
-    do { count = read(exec_error[0], &failure, sizeof(failure)); } while (count < 0 && errno == EINTR);
+    ssize_t count = -1;
+    long long exec_deadline = now_ms() + START_MS;
+    while (!parent_lost) {
+        struct pollfd item = { .fd = exec_error[0], .events = POLLIN };
+        int ready = poll(&item, 1, 20);
+        if (ready < 0 && errno != EINTR) { failure = errno; break; }
+        if (item.revents & (POLLIN | POLLHUP)) {
+            count = read(exec_error[0], &failure, sizeof(failure));
+            if (count < 0 && errno == EINTR) continue;
+            break;
+        }
+        if (now_ms() >= exec_deadline) { failure = ETIMEDOUT; break; }
+    }
     close(exec_error[0]);
     if (count != 0) {
-        if (send_report(channel, EXEC_ERROR, count == sizeof(failure) ? failure : EIO) != 0)
-            guardian_lost_parent(0);
-        for (;;) pause();
+        if (send_report(channel, EXEC_ERROR, failure ? failure : EIO) != 0)
+            parent_lost = 1;
     }
-    int result = 0;
-    pid_t waited;
-    do { waited = waitpid(root, &result, 0); } while (waited < 0 && errno == EINTR);
-    if (waited != root || send_report(channel, ROOT_EXIT, result) != 0)
-        guardian_lost_parent(0);
-    /* Never release the group identity here. W will perform its final group
-     * signal while we are alive or still its unreaped direct child. */
-    for (;;) pause();
+    int reported = count != 0;
+    while (!parent_lost) {
+        siginfo_t observed = {0};
+        if (!reported && waitid(P_PID, (id_t)root, &observed, WEXITED | WNOHANG | WNOWAIT) != 0) break;
+        if (!reported && observed.si_pid == root) {
+            int result = observed.si_code == CLD_EXITED ? observed.si_status << 8 : observed.si_status;
+            if (send_report(channel, ROOT_EXIT, result) != 0) break;
+            reported = 1;
+        }
+        struct pollfd item = { .fd = channel, .events = POLLIN };
+        int ready = poll(&item, 1, 20);
+        if ((ready < 0 && errno != EINTR) || (item.revents & (POLLIN | POLLHUP | POLLERR))) break;
+    }
+    close(channel);
+    /* If W dies, G remains a subreaper outside the business group and owns
+     * detached descendants too. If G dies, W adopts and performs this sweep. */
+    (void)cleanup_children();
+    _exit(125);
 }
 
 int main(int argc, char **argv) {
@@ -147,6 +208,9 @@ int main(int argc, char **argv) {
         status_line("DONE", 125);
         return 125;
     }
+    int own_pidfd = (int)syscall(SYS_pidfd_open, getpid(), 0);
+    if (own_pidfd < 0) { status_line("ERROR", errno); status_line("DONE", 125); return 125; }
+    close(own_pidfd);
     int pair[2];
     if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, pair) != 0) {
         status_line("ERROR", errno);
@@ -201,37 +265,13 @@ int main(int argc, char **argv) {
         if (!group_ready && now_ms() - started > START_MS) { abnormal = 1; break; }
     }
 
-    /* There is no waitpid before this final signal. Normal SIGCHLD disposition
-     * and sole parenthood pin guard's kernel identifier even if it just died. */
-    siginfo_t held = {0};
-    if (waitid(P_PID, (id_t)guard, &held, WEXITED | WNOHANG | WNOWAIT) != 0) {
-        status_line("UNCONFIRMED", 2);
-        return 125;
-    }
-    if (held.si_pid == guard) abnormal = 1;
-    int signalled = kill(group_ready ? -guard : guard, SIGKILL);
-    if (signalled != 0 && errno != ESRCH) abnormal = 1;
-    /* Signal authority is now permanently closed. Reaping below can release
-     * the number; absolutely no numeric signal is sent after this point. */
+    /* Stop the guardian, adopt its whole remaining subtree, and terminate
+     * only authenticated wait-children. setsid/double-fork do not escape it. */
     close(pair[0]);
-    long long deadline = now_ms() + CLEANUP_MS;
-    for (;;) {
-        int result;
-        pid_t child = waitpid(-1, &result, WNOHANG);
-        if (child > 0) continue;
-        if (child < 0 && errno == ECHILD) {
-            if (abnormal) { status_line("UNCONFIRMED", 3); return 125; }
-            int exit_code = root_known
-                ? (WIFEXITED(root_status) ? WEXITSTATUS(root_status) : 128 + WTERMSIG(root_status))
-                : 125;
-            status_line("DONE", exit_code);
-            return exit_code;
-        }
-        if (child < 0 && errno != EINTR) break;
-        if (now_ms() >= deadline) break;
-        struct timespec pause_time = { .tv_sec = 0, .tv_nsec = 10000000 };
-        nanosleep(&pause_time, NULL);
-    }
-    status_line("UNCONFIRMED", 4);
-    return 125;
+    if (!cleanup_children()) { status_line("UNCONFIRMED", 4); return 125; }
+    if (abnormal) { status_line("UNCONFIRMED", 3); return 125; }
+    int exit_code = root_known
+        ? (WIFEXITED(root_status) ? WEXITSTATUS(root_status) : 128 + WTERMSIG(root_status)) : 125;
+    status_line("DONE", exit_code);
+    return exit_code;
 }

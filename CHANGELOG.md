@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 3.1.3 - 2026-11-10
+
+- Ensure owned Linux descendants are reaped after cancellation, timeout or direct-child exit, without terminating unrelated processes.
+- Clarify supported Gateway versions, ordinary image inputs and setup examples.
+
+- Update the scoped SDK npm dependency to 11.21.2, repairing its bundled IP-address and Undici dependencies. Retain full development audit reports and narrowly evaluate the reviewed glob/minimatch availability findings with an expiring, lock-bound exception.
+
+- Refresh the pinned DocWen test-contract snapshot so the resolved-numbering example keeps an omitted task language absent from both its schema defaults and effective options.
 
 ## 3.1.2 - 2026-10-21
 

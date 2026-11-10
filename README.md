@@ -6,6 +6,8 @@ Use DocWen from OpenClaw to check documents, convert files, and work with PDFs a
 
 Install **DocWen 0.12.0 or later** separately before using this plugin. [Download the plugin](https://github.com/ZHYX91/docwen-openclaw/releases).
 
+**OpenClaw requirement:** Gateway / plugin API `>=2026.7.1-2 <2027.0.0`. Check the Gateway version before installing. The build SDK's pinned version is not a requirement to run exactly that Gateway release.
+
 ## What you can do
 
 - Check a file's format and see which conversions are available.
@@ -38,6 +40,8 @@ File-changing tools are **off by default**. You choose which ones OpenClaw may u
 Conversion tools need full input paths and an output folder on the Gateway computer. Choose a new folder: `overwrite=true` replaces the entire existing output folder and its contents. Markdown numbering can also update the original file when `inPlace=true` is explicitly requested. If a write's result is uncertain, the plugin will not retry it automatically. See [the examples (Chinese)](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/examples/basic.md) for common tasks and [the configuration reference](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/technical-details.md#configuration) for settings.
 
 On Linux, if the plugin reports that the output filesystem is unsupported, choose a folder on the native Linux filesystem. This can happen with Windows drives mounted in WSL.
+
+**Markdown with images:** For Markdown → Word, first inspect the available `convert.markdown_source.to_docx` capability with `docwen_info`. Provide the Markdown as a `source` document and each linked image explicitly as a `linked_resource`, with a `logicalPath` matching the link written in the Markdown. All physical file paths must be on the Gateway computer. The plugin does not search neighboring folders for images. Add `keepImages`, `ocr`, or `ocrLanguage` only if the selected capability advertises that option; don't add them just to request ordinary embedded images.
 
 ## How it works
 
