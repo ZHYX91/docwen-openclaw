@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Refresh the pinned DocWen test-contract snapshot so the resolved-numbering example keeps an omitted task language absent from both its schema defaults and effective options. Runtime behavior and package version are unchanged.
+
 ## 3.1.2 - 2026-10-21
 
 - Update the build SDK to OpenClaw 2026.10.5 and bind both package build declarations to the locked SDK version.
