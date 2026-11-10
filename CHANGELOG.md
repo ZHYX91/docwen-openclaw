@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Update the scoped SDK npm dependency to 11.21.2, repairing its bundled IP-address and Undici dependencies. Full development auditing remains blocked by glob and minimatch advisories.
+
 - Refresh the pinned DocWen test-contract snapshot so the resolved-numbering example keeps an omitted task language absent from both its schema defaults and effective options. Runtime behavior and package version are unchanged.
 
 ## 3.1.2 - 2026-10-21
