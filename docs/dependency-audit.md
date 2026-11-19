@@ -13,6 +13,14 @@ The exceptions in `scripts/audit-policy.mjs` expire at **2026-12-10 00:00 UTC**.
 
 Affected parent findings are accepted only when every reported cause recursively resolves to these reviewed advisories. Unknown causes, changed paths or lock inputs, elevated severity, production classification and expiry fail closed. A clean report needs no exception. Do not update the lock fingerprint mechanically: reassess dependency changes first, including host and installer behavior.
 
+## Reviewed Hono development updates (2026-11-20)
+
+This proposed lockfile combines Dependabot [#28](https://github.com/ZHYX91/docwen-openclaw/pull/28) and [#29](https://github.com/ZHYX91/docwen-openclaw/pull/29): `@hono/node-server` **2.1.5 → 2.1.8** and `hono` **4.13.13 → 4.13.18**. Each upstream PR changes only its own installed entry; the combined lock changes only these two entries (version, registry tarball, integrity). Both are marked `dev: true` under the pinned OpenClaw development graph. The root dependencies, package metadata, build scripts, host compatibility range and distributed archive allowlist are unchanged. Their server APIs are not imported by the plugin runtime.
+
+The combined parsed-lock SHA-256 is `a4f9332cde2d3bcc9b551c7ecfae95a9aaf997866b0291011a61b1b27190fb6f`; the reviewed fingerprint replaces the old `05a5bcc584b96d8179cedcdd4946c8121056e1f0fdb9080f029cefb1c991f342` in `scripts/audit-policy.mjs`. The **2026-12-10** expiry, permitted advisories, installed paths, versions, development-only requirement and severity restrictions are *not* broadened. The new test checks both updated package versions and their dev-only classification against the reviewed lock.
+
+This is a source and lockfile assessment, **not** a claim that the final dependency audit or real Gateway installation was run. Before merging or publishing, the candidate must pass the existing source, audit, native lifecycle, exact-package and Gateway acceptance gates on supported hosts. Do not merge both separate Dependabot PRs again after this combined change.
+
 ## Exposure assessment
 
 The plugin does not accept glob patterns or directly import glob, minimatch or npm. Its nonlocal runtime imports are the OpenClaw tool-plugin SDK and typebox. TypeScript compilation does not bundle dependencies; the archive verifier requires an exact file list without node_modules and an empty npm bundled list.
