@@ -83,3 +83,15 @@ test("clean audit needs no exception, including after expiry", () => {
   };
   assert.equal(assessDevelopmentAudit(clean, lock, Date.parse("2027-01-01")).accepted, 0);
 });
+
+test("reviewed Hono updates remain dev-only without changing root production dependencies", () => {
+  for (const [path, version] of [
+    ["node_modules/hono", "4.13.18"],
+    ["node_modules/@hono/node-server", "2.1.8"],
+  ]) {
+    assert.equal(lock.packages[path]?.version, version, path);
+    assert.equal(lock.packages[path]?.dev, true, path);
+  }
+  assert.deepEqual(lock.packages[""]?.dependencies, { typebox: "1.3.8" });
+  assert.equal(assessDevelopmentAudit(report(), lock, now).accepted, 2);
+});
