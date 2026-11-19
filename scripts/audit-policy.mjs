@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 // See docs/dependency-audit.md. This is a reviewed snapshot, not a severity bypass.
-const LOCK_SHA256 = "05a5bcc584b96d8179cedcdd4946c8121056e1f0fdb9080f029cefb1c991f342";
+const LOCK_SHA256 = "a4f9332cde2d3bcc9b551c7ecfae95a9aaf997866b0291011a61b1b27190fb6f";
 const EXPIRES = Date.parse("2026-12-10T00:00:00Z");
 const EXCEPTIONS = {
   glob: {

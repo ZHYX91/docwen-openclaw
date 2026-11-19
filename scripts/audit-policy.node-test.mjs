@@ -32,6 +32,20 @@ test("rejects unknown advisory even with unchanged package and severity", () => 
   r.vulnerabilities.glob.via[0].url += "-new";
   assert.throws(() => assessDevelopmentAudit(r, lock, now), /advisory_unknown/);
 });
+test("rejects a new advisory on either updated MCP SDK development dependency", () => {
+  for (const name of ["hono", "@hono/node-server"]) {
+    const r = report();
+    r.vulnerabilities[name] = {
+      name,
+      severity: "moderate",
+      nodes: [`node_modules/${name}`],
+      via: [{ name, severity: "moderate", url: "https://example.invalid/unreviewed" }],
+    };
+    r.metadata.vulnerabilities.moderate++;
+    r.metadata.vulnerabilities.total++;
+    assert.throws(() => assessDevelopmentAudit(r, lock, now), /advisory_unknown/);
+  }
+});
 test("rejects expiry, dependency drift and production reclassification", () => {
   assert.throws(() => assessDevelopmentAudit(report(), lock, Date.parse("2026-12-10")), /expired/);
   for (const field of ["version", "dev"]) {
