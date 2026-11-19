@@ -69,3 +69,17 @@ test("clean audit needs no exception, including after expiry", () => {
   };
   assert.equal(assessDevelopmentAudit(clean, lock, Date.parse("2027-01-01")).accepted, 0);
 });
+
+test("reviewed Hono fixes stay in the development-only OpenClaw graph", () => {
+  for (const [path, version] of [
+    ["node_modules/hono", "4.13.18"],
+    ["node_modules/@hono/node-server", "2.1.8"],
+  ]) {
+    assert.equal(lock.packages[path]?.version, version, path);
+    assert.equal(lock.packages[path]?.dev, true, path);
+  }
+  assert.deepEqual(lock.packages[""]?.dependencies, { typebox: "1.3.8" });
+  // A dependency update must not enlarge the shipped production graph or
+  // silently weaken the exact-lock development advisory review.
+  assert.equal(assessDevelopmentAudit(report(), lock, now).accepted, 2);
+});
