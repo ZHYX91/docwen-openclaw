@@ -32,6 +32,20 @@ test("rejects unknown advisory even with unchanged package and severity", () => 
   r.vulnerabilities.glob.via[0].url += "-new";
   assert.throws(() => assessDevelopmentAudit(r, lock, now), /advisory_unknown/);
 });
+test("rejects a new advisory on either updated MCP SDK development dependency", () => {
+  for (const name of ["hono", "@hono/node-server"]) {
+    const r = report();
+    r.vulnerabilities[name] = {
+      name,
+      severity: "moderate",
+      nodes: [`node_modules/${name}`],
+      via: [{ name, severity: "moderate", url: "https://example.invalid/unreviewed" }],
+    };
+    r.metadata.vulnerabilities.moderate++;
+    r.metadata.vulnerabilities.total++;
+    assert.throws(() => assessDevelopmentAudit(r, lock, now), /advisory_unknown/);
+  }
+});
 test("rejects expiry, dependency drift and production reclassification", () => {
   assert.throws(() => assessDevelopmentAudit(report(), lock, Date.parse("2026-12-10")), /expired/);
   for (const field of ["version", "dev"]) {
@@ -68,4 +82,16 @@ test("clean audit needs no exception, including after expiry", () => {
     metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 } },
   };
   assert.equal(assessDevelopmentAudit(clean, lock, Date.parse("2027-01-01")).accepted, 0);
+});
+
+test("reviewed Hono updates remain dev-only without changing root production dependencies", () => {
+  for (const [path, version] of [
+    ["node_modules/hono", "4.13.18"],
+    ["node_modules/@hono/node-server", "2.1.8"],
+  ]) {
+    assert.equal(lock.packages[path]?.version, version, path);
+    assert.equal(lock.packages[path]?.dev, true, path);
+  }
+  assert.deepEqual(lock.packages[""]?.dependencies, { typebox: "1.3.8" });
+  assert.equal(assessDevelopmentAudit(report(), lock, now).accepted, 2);
 });
