@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.4 - 2026-11-20
+
+- Update Hono and its Node.js adapter in the development SDK. The plugin keeps the same runtime dependencies and Gateway compatibility.
+
 ## 3.1.3 - 2026-11-10
 
 - Ensure owned Linux descendants are reaped after cancellation, timeout or direct-child exit, without terminating unrelated processes.
