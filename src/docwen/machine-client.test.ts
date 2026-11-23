@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -89,7 +89,7 @@ class FakeChild extends EventEmitter {
   private readonly decoder = new MachineFrameDecoder();
   private taskPlan: JsonObject | null = null;
 
-  constructor() {
+  constructor(private readonly executionTrace?: JsonObject[]) {
     super();
     if (serverState.behavior === "stderr_overflow") {
       queueMicrotask(() => this.stderr.write(Buffer.alloc(256 * 1024 + 1)));
@@ -180,6 +180,16 @@ class FakeChild extends EventEmitter {
       return;
     }
     if (message.method === "task/execute") {
+      if (this.executionTrace) {
+        const [first, ...rest] = this.executionTrace;
+        const request = first?.method === "task/execute" ? first : undefined;
+        for (const frame of request ? rest : this.executionTrace) {
+          // Correlate the recorded reply with the live request. Keep unsolicited frames intact.
+          const incoming = request && frame.id === request.id ? { ...frame, id } : frame;
+          this.stdout.write(encodeMachineFrame(incoming));
+        }
+        return;
+      }
       if (serverState.behavior === "progress_before_accept") {
         queueMicrotask(() =>
           this.notify("task/progress", {
@@ -237,7 +247,11 @@ class FakeChild extends EventEmitter {
       queueMicrotask(() =>
         this.notify("task/completed", {
           task_id: "task.1",
-          sequence: ["progress_before_accept", "invalid_progress"].includes(serverState.behavior) ? 2 : 1,
+          sequence: ["progress_before_accept", "invalid_progress", "wrong_progress_task"].includes(
+            serverState.behavior,
+          )
+            ? 2
+            : 1,
           bundle: {
             schema: "docwen.artifact_bundle.v3",
             bundle_id: "bundle.1",
@@ -286,12 +300,19 @@ class FakeChild extends EventEmitter {
   private notify(method: string, params: JsonObject): void {
     const fault = serverState.behavior;
     const completed = method === "task/completed";
-    if (completed && (fault === "nonmonotonic" || fault === "wrong_progress_task")) {
+    if (completed && fault === "wrong_progress_task") {
       this.stdout.write(
         encodeMachineFrame({
           jsonrpc: "2.0",
           method: "task/progress",
-          params: { task_id: fault === "wrong_progress_task" ? "task.other" : "task.1", sequence: 2 },
+          params: {
+            task_id: "task.other",
+            sequence: 1,
+            phase: "conversion",
+            completed: 50,
+            total: 100,
+            unit: "percent",
+          },
         }),
       );
     }
@@ -504,7 +525,32 @@ describe("DocWen Machine Protocol client", () => {
   });
 
   it.each([
-    "nonmonotonic",
+    [
+      "valid/machine.task-failed",
+      "docwen_machine_remote:dependency.libreoffice_unavailable",
+      "LibreOffice is unavailable.",
+    ],
+    [
+      "invalid/machine.nonmonotonic-sequence",
+      "docwen_machine_protocol_error",
+      "notification sequence is not strictly monotonic",
+    ],
+    ["invalid/machine.invalid-progress", "docwen_machine_protocol_error", "invalid task progress"],
+    [
+      "invalid/machine.notification-before-acceptance",
+      "docwen_machine_protocol_error",
+      "unexpected JSON-RPC response for task/execute",
+    ],
+  ])("replays pinned %s through the task client", async (fixture, code, message) => {
+    const trace = JSON.parse(
+      readFileSync(`contracts/docwen/fixtures/${fixture}.trace.json`, "utf8"),
+    ) as JsonObject[];
+    spawnMock.mockImplementationOnce(() => new FakeChild(trace));
+    const invocation = await taskInvocation();
+    await expect(runDocWenMachineTask(invocation.options)).rejects.toMatchObject({ code, message });
+  });
+
+  it.each([
     "wrong_progress_task",
     "progress_before_accept",
     "unexpected_response",
