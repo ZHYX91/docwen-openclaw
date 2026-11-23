@@ -120,6 +120,7 @@ beforeEach(() => {
   });
 });
 afterEach(async () => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
@@ -130,6 +131,57 @@ async function input() {
   await writeFile(file, "# Original\n");
   return file;
 }
+
+describe("reading the completed Markdown validation report", () => {
+  it.each(["unchanged", "changed", "grew", "cancelled", "expired"] as const)(
+    "reads only the verified report and removes staging (%s)",
+    async (mode) => {
+      const file = await input();
+      const controller = new AbortController();
+      const verified = Buffer.from('{"count":1}');
+      const originalTask = mocks.task.getMockImplementation()!;
+      let staging = "";
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      mocks.query.mockResolvedValue({
+        result: { capabilities: [{ ...capability, capability_id: "validate.markdown" }] },
+      });
+      mocks.task.mockImplementationOnce(async (options) => {
+        const task: MachineTaskCompleted = await originalTask(options);
+        const report = task.bundle.artifacts[0]!;
+        report.size_bytes = verified.length;
+        report.sha256 = createHash("sha256").update(verified).digest("hex");
+        report.media_type = "application/json";
+        staging = path.dirname(report.absolutePath);
+        await writeFile(
+          report.absolutePath,
+          mode === "changed" ? '{"count":2}' : mode === "grew" ? '{"count":100}' : verified,
+        );
+        if (mode === "cancelled") controller.abort();
+        if (mode === "expired") await vi.advanceTimersByTimeAsync(1000);
+        return task;
+      });
+      const result = await executeDocWenTool(
+        "docwen_validate_markdown",
+        { file },
+        { writeTimeoutMs: 1000 },
+        controller.signal,
+      );
+      if (mode === "unchanged") expect(result).toMatchObject({ report: { count: 1 } });
+      else {
+        const code =
+          mode === "cancelled"
+            ? "docwen_machine_cancelled"
+            : mode === "expired"
+              ? "docwen_machine_timeout"
+              : "docwen_machine_integrity_error";
+        expect(result).toMatchObject({ status: "failed", error: { code } });
+        expect(result).not.toHaveProperty("report");
+      }
+      await expect(readdir(staging)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(file, "utf8")).toBe("# Original\n");
+    },
+  );
+});
 
 describe("write tool publication results", () => {
   it.each([false, true])(

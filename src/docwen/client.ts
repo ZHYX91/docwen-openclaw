@@ -1,6 +1,9 @@
-import { lstat, mkdir, mkdtemp, readFile, realpath } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { lstat, mkdir, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { buffer } from "node:stream/consumers";
 
 import type { DocWenPluginConfig } from "../config.js";
 import { WRITE_TOOL_NAMES } from "../tools/catalog.js";
@@ -353,16 +356,40 @@ async function validateMarkdown(
         "DocWen returned an invalid validation report.",
       );
     }
+    // Read one extra byte so that a changed file cannot exceed the validated
+    // report size or grow unbounded while the bytes are being consumed.
+    signal?.throwIfAborted();
+    let bytes: Buffer;
+    try {
+      bytes = await buffer(createReadStream(preferred.absolutePath, { end: preferred.size_bytes, signal }));
+    } catch (error) {
+      signal?.throwIfAborted();
+      throw new DocWenMachineError(
+        "docwen_validation_report_invalid",
+        "DocWen validation report could not be read.",
+        {
+          cause: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+    signal?.throwIfAborted();
+    if (
+      bytes.length !== preferred.size_bytes ||
+      createHash("sha256").update(bytes).digest("hex") !== preferred.sha256
+    ) {
+      throw new DocWenMachineError(
+        "docwen_machine_integrity_error",
+        "The validation report changed after verification.",
+      );
+    }
     let report: unknown;
     try {
-      report = JSON.parse(await readFile(preferred.absolutePath, "utf8"));
+      report = JSON.parse(bytes.toString("utf8"));
     } catch (error) {
       throw new DocWenMachineError(
         "docwen_validation_report_invalid",
         "DocWen validation report is not valid JSON.",
-        {
-          cause: error instanceof Error ? error.message : String(error),
-        },
+        { cause: error instanceof Error ? error.message : String(error) },
       );
     }
     await cleanupPublicationPath(execution.temporaryRoot, cleanup, "staging_cleanup_failed");
