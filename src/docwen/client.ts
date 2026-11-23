@@ -57,9 +57,6 @@ const TIFF_MEDIA_TYPE = "image/tiff";
 const JSON_MEDIA_TYPE = "application/json";
 const RESOLVED_DOCUMENT_MEDIA_TYPE = "application/vnd.docwen.resolved-document+json";
 const NUMBERING_EXPORT_PLAN_MEDIA_TYPE = "application/vnd.docwen.numbering-export-plan+json";
-const PROOFREAD_REPORT_SCHEMA = createRequire(import.meta.url)(
-  "../../contracts/docwen/schemas/docwen.proofread_report.v2.schema.json",
-) as XSchema;
 const MAX_REPORT_BYTES = 16 * 1024 * 1024;
 const MACHINE_INPUT_ROLES: readonly MachineInputRole[] = [
   "source",
@@ -327,6 +324,10 @@ function validateTemplateResources(items: JsonObject[], target?: string): void {
     if (item.is_default) defaults.add(itemTarget);
   }
 }
+
+const PROOFREAD_REPORT_SCHEMA = createRequire(import.meta.url)(
+  "../../contracts/docwen/schemas/docwen.proofread_report.v2.schema.json",
+) as XSchema;
 
 async function validateMarkdown(
   binaryPath: string,
