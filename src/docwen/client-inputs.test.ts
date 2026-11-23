@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import sourceWord from "../../contracts/docwen/fixtures/valid/machine.source-proofread-capability.response.json" with { type: "json" };
+import listedTemplates from "../../contracts/docwen/fixtures/valid/machine.templates.response.json" with { type: "json" };
 import type * as MachineClientModule from "./machine-client.js";
 import type * as OutputTransactionModule from "./output-transaction.js";
 
@@ -90,16 +92,7 @@ describe("formats advertised by DocWen Machine capabilities", () => {
       const image = path.join(path.dirname(file), "chart.png");
       await writeFile(image, Buffer.from([137, 80, 78, 71]));
       const sourceCapability = {
-        ...conversionCapability("markdown_source", "document", "text/markdown"),
-        capability_id: "convert.markdown_source.to_docx",
-        input_shape: {
-          slots: [
-            { role: "source", kind: "document", media_types: ["text/markdown"], min_items: 1, max_items: 1 },
-            { role: "linked_resource", kind: "resource", media_types: ["image/png"], min_items: 0 },
-          ],
-          undeclared_roles: "reject",
-        },
-        output_media_types: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+        ...sourceWord.result.capabilities[0],
         availability: available ? "available" : "unavailable",
       };
       mocks.query.mockResolvedValue({
@@ -127,6 +120,7 @@ describe("formats advertised by DocWen Machine capabilities", () => {
         expect(mocks.planned).toHaveBeenCalledWith(
           expect.objectContaining({
             capability_id: "convert.markdown_source.to_docx",
+            options: {},
             inputs: [
               expect.objectContaining({ role: "source", media_type: "text/markdown" }),
               expect.objectContaining({ role: "linked_resource", media_type: "image/png" }),
@@ -136,6 +130,61 @@ describe("formats advertised by DocWen Machine capabilities", () => {
       } else {
         expect(mocks.planned).not.toHaveBeenCalled();
         expect(result).toMatchObject({ status: "failed", error: { code: "docwen_capability_unavailable" } });
+      }
+    },
+  );
+
+  const wordCapability = sourceWord.result.capabilities[0]!;
+  const workbookCapability = {
+    ...wordCapability,
+    capability_id: "convert.markdown.to_xlsx",
+    output_media_types: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+    options_schema: {
+      properties: {
+        template_name: {
+          type: "string",
+          "x-docwen-resource-kind": "templates",
+          "x-docwen-resource-target": "xlsx",
+        },
+      },
+    },
+  };
+  const builtin = listedTemplates.result.resources[0]!;
+  const custom = listedTemplates.result.resources[1]!;
+  const xlsxId = `template.xlsx.${"f".repeat(64)}`;
+  const legacy = { ...wordCapability, options_schema: { properties: { template_name: { type: "string" } } } };
+  const noTemplate = { ...wordCapability, options_schema: { properties: {} } };
+  it.each([
+    { capability: wordCapability, target: "docx", template: builtin.id, allowed: true },
+    { capability: wordCapability, target: "docx", template: custom.id, allowed: true },
+    { capability: wordCapability, target: "docx", template: xlsxId, allowed: false },
+    { capability: wordCapability, target: "docx", template: custom.name, allowed: false },
+    { capability: workbookCapability, target: "xlsx", template: xlsxId, allowed: true },
+    { capability: workbookCapability, target: "xlsx", template: custom.id, allowed: false },
+    { capability: legacy, target: "docx", template: "Custom name", allowed: true },
+    { capability: noTemplate, target: "docx", template: "Custom name", allowed: false },
+  ])(
+    "honors the selected capability's template contract: $target / $template / $allowed",
+    async ({ capability, target, template, allowed }) => {
+      const file = await sourceFile("md");
+      mocks.query.mockResolvedValue({ result: { capabilities: [capability] } });
+      const response = await executeDocWenTool(
+        "docwen_convert",
+        {
+          inputs: [{ file, kind: "document", role: "source", logicalPath: "note.md" }],
+          to: target,
+          template,
+          outputDir: path.join(path.dirname(file), "result"),
+        },
+        {},
+      );
+      if (allowed) {
+        expect(mocks.planned).toHaveBeenCalledWith(
+          expect.objectContaining({ options: { template_name: template } }),
+        );
+      } else {
+        expect(mocks.planned).not.toHaveBeenCalled();
+        expect(response).toMatchObject({ status: "failed", error: { code: "docwen_option_unsupported" } });
       }
     },
   );
