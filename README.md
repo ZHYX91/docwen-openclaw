@@ -81,3 +81,5 @@ Use `openclaw-config.example.json5` as the configuration shape. See [testing and
 Install a plugin release from the [GitHub Releases page](https://github.com/ZHYX91/docwen-openclaw/releases). For building, testing, verifying and publishing a release, see the [maintainer release guide](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/releasing.md). Installing this plugin never installs or upgrades DocWen.
 
 For a map of the source files, see the [technical details](https://github.com/ZHYX91/docwen-openclaw/blob/main/docs/technical-details.md).
+
+The packaged proofreading-report schema comes from DocWen and retains its AGPL-3.0-or-later license. Its source and license are available in the [pinned contract snapshot](https://github.com/ZHYX91/docwen-openclaw/tree/main/contracts/docwen).

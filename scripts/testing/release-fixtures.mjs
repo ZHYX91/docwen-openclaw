@@ -25,6 +25,8 @@ function packageJson(overrides = {}) {
       "native/linux-owner-x64",
       "native/windows-x64.exe",
       "native/README.md",
+      "contracts/docwen/LICENSE",
+      "contracts/docwen/schemas/docwen.proofread_report.v2.schema.json",
       "openclaw.plugin.json",
       "openclaw-config.example.json5",
       "skills",

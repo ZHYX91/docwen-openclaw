@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import validReport from "../../contracts/docwen/fixtures/valid/proofread-report.empty.json" with { type: "json" };
+import obsoleteReport from "../../contracts/docwen/fixtures/invalid/proofread-report.old-version-field.json" with { type: "json" };
 import { executeDocWenTool } from "./client.js";
 import { DocWenMachineError, type MachineTaskCompleted } from "./machine-client.js";
 import type * as MachineClientModule from "./machine-client.js";
@@ -133,32 +135,43 @@ async function input() {
 }
 
 describe("reading the completed Markdown validation report", () => {
+  function returnReport(verified: Buffer, stored: Buffer = verified, afterWrite?: () => Promise<void>) {
+    const originalTask = mocks.task.getMockImplementation()!;
+    let staging = "";
+    mocks.query.mockResolvedValue({
+      result: { capabilities: [{ ...capability, capability_id: "validate.markdown" }] },
+    });
+    mocks.task.mockImplementationOnce(async (options) => {
+      const task: MachineTaskCompleted = await originalTask(options);
+      const report = task.bundle.artifacts[0]!;
+      report.size_bytes = verified.length;
+      report.sha256 = createHash("sha256").update(verified).digest("hex");
+      report.media_type = "application/json";
+      staging = path.dirname(report.absolutePath);
+      await writeFile(report.absolutePath, stored);
+      await afterWrite?.();
+      return task;
+    });
+    return () => readdir(staging);
+  }
+
   it.each(["unchanged", "changed", "grew", "cancelled", "expired"] as const)(
     "reads only the verified report and removes staging (%s)",
     async (mode) => {
       const file = await input();
+      await writeFile(file, ""); // The pinned report describes an empty Markdown file.
       const controller = new AbortController();
-      const verified = Buffer.from('{"count":1}');
-      const originalTask = mocks.task.getMockImplementation()!;
-      let staging = "";
+      const verified = Buffer.from(JSON.stringify(validReport));
+      const stored =
+        mode === "changed"
+          ? Buffer.from(verified.toString().replace("note.md", "next.md"))
+          : mode === "grew"
+            ? Buffer.concat([verified, Buffer.from(" ")])
+            : verified;
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-      mocks.query.mockResolvedValue({
-        result: { capabilities: [{ ...capability, capability_id: "validate.markdown" }] },
-      });
-      mocks.task.mockImplementationOnce(async (options) => {
-        const task: MachineTaskCompleted = await originalTask(options);
-        const report = task.bundle.artifacts[0]!;
-        report.size_bytes = verified.length;
-        report.sha256 = createHash("sha256").update(verified).digest("hex");
-        report.media_type = "application/json";
-        staging = path.dirname(report.absolutePath);
-        await writeFile(
-          report.absolutePath,
-          mode === "changed" ? '{"count":2}' : mode === "grew" ? '{"count":100}' : verified,
-        );
+      const listStaging = returnReport(verified, stored, async () => {
         if (mode === "cancelled") controller.abort();
         if (mode === "expired") await vi.advanceTimersByTimeAsync(1000);
-        return task;
       });
       const result = await executeDocWenTool(
         "docwen_validate_markdown",
@@ -166,7 +179,7 @@ describe("reading the completed Markdown validation report", () => {
         { writeTimeoutMs: 1000 },
         controller.signal,
       );
-      if (mode === "unchanged") expect(result).toMatchObject({ report: { count: 1 } });
+      if (mode === "unchanged") expect(result).toMatchObject({ report: validReport });
       else {
         const code =
           mode === "cancelled"
@@ -177,10 +190,75 @@ describe("reading the completed Markdown validation report", () => {
         expect(result).toMatchObject({ status: "failed", error: { code } });
         expect(result).not.toHaveProperty("report");
       }
-      await expect(readdir(staging)).rejects.toMatchObject({ code: "ENOENT" });
-      expect(await readFile(file, "utf8")).toBe("# Original\n");
+      await expect(listStaging()).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(file, "utf8")).toBe("");
     },
   );
+
+  const fullwidthDigit = {
+    matched_text: "１",
+    error_text: "１",
+    suggestion: "1",
+    error_type: "symbol",
+    source: "symbol",
+    rule_key: "symbol_correct",
+    range: { start: { offset: 0, line: 0, column: 0 }, end: { offset: 1, line: 0, column: 1 } },
+    fix: { kind: "replace_text", replacement: "1", applicable: true },
+  };
+
+  it("preserves a valid issue, its range and suggested fix", async () => {
+    const file = await input();
+    await writeFile(file, "１");
+    const report = {
+      ...validReport,
+      source: { ...validReport.source, content_sha256: createHash("sha256").update("１").digest("hex") },
+      issues: [fullwidthDigit],
+      summary: { symbol_correct: 1 },
+    };
+    const listStaging = returnReport(Buffer.from(JSON.stringify(report)));
+    expect(await executeDocWenTool("docwen_validate_markdown", { file }, {})).toMatchObject({ report });
+    await expect(listStaging()).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each([
+    ["JSON scalar", null],
+    ["obsolete schema", obsoleteReport],
+    ["invalid issue", { ...validReport, issues: [{}] }],
+    ["invalid summary", { ...validReport, summary: { typo: -1 } }],
+    [
+      "invalid nested position",
+      {
+        ...validReport,
+        issues: [
+          {
+            ...fullwidthDigit,
+            range: { ...fullwidthDigit.range, start: { offset: -1, line: 0, column: 0 } },
+          },
+        ],
+      },
+    ],
+    [
+      "fix on a non-fixable issue",
+      { ...validReport, issues: [{ ...fullwidthDigit, source: "pairing", rule_key: "symbol_pair" }] },
+    ],
+  ] as const)("rejects verified bytes that do not contain a v2 report (%s)", async (_name, report) => {
+    const file = await input();
+    const listStaging = returnReport(Buffer.from(JSON.stringify(report)));
+    const result = await executeDocWenTool("docwen_validate_markdown", { file }, {});
+    expect(result).toMatchObject({ status: "failed", error: { code: "docwen_validation_report_invalid" } });
+    expect(result).not.toHaveProperty("report");
+    await expect(listStaging()).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a valid report for different Markdown bytes", async () => {
+    const file = await input();
+    const listStaging = returnReport(Buffer.from(JSON.stringify(validReport)));
+    const result = await executeDocWenTool("docwen_validate_markdown", { file }, {});
+    expect(result).toMatchObject({ status: "failed", error: { code: "docwen_machine_integrity_error" } });
+    expect(result).not.toHaveProperty("report");
+    await expect(listStaging()).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(file, "utf8")).toBe("# Original\n");
+  });
 });
 
 describe("write tool publication results", () => {

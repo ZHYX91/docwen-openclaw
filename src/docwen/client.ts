@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, mkdir, mkdtemp, realpath } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { buffer } from "node:stream/consumers";
+
+import { Check, type XSchema } from "typebox/schema";
 
 import type { DocWenPluginConfig } from "../config.js";
 import { WRITE_TOOL_NAMES } from "../tools/catalog.js";
@@ -20,6 +23,7 @@ import {
   runDocWenMachineTask,
   type ValidatedArtifactBundle,
 } from "./machine-client.js";
+import { isJsonObject } from "./machine-framing.js";
 import { resolveDocWenBinary } from "./path.js";
 import { diagnosticSummary } from "./diagnostics.js";
 import { preflightPublication } from "./output-preflight.js";
@@ -53,6 +57,9 @@ const TIFF_MEDIA_TYPE = "image/tiff";
 const JSON_MEDIA_TYPE = "application/json";
 const RESOLVED_DOCUMENT_MEDIA_TYPE = "application/vnd.docwen.resolved-document+json";
 const NUMBERING_EXPORT_PLAN_MEDIA_TYPE = "application/vnd.docwen.numbering-export-plan+json";
+const PROOFREAD_REPORT_SCHEMA = createRequire(import.meta.url)(
+  "../../contracts/docwen/schemas/docwen.proofread_report.v2.schema.json",
+) as XSchema;
 const MAX_REPORT_BYTES = 16 * 1024 * 1024;
 const MACHINE_INPUT_ROLES: readonly MachineInputRole[] = [
   "source",
@@ -73,6 +80,7 @@ type InputSpec = {
 };
 
 type TaskExecution = {
+  inputs: MachineInputHandle[];
   completed: MachineTaskCompleted;
   temporaryRoot: string;
 };
@@ -392,10 +400,22 @@ async function validateMarkdown(
         { cause: error instanceof Error ? error.message : String(error) },
       );
     }
+    if (!isJsonObject(report) || !isJsonObject(report.source) || !Check(PROOFREAD_REPORT_SCHEMA, report)) {
+      throw new DocWenMachineError(
+        "docwen_validation_report_invalid",
+        "DocWen returned an invalid v2 proofreading report.",
+      );
+    }
+    if (report.source.content_sha256 !== execution.inputs[0]!.sha256) {
+      throw new DocWenMachineError(
+        "docwen_machine_integrity_error",
+        "The proofreading report describes a different Markdown input.",
+      );
+    }
     await cleanupPublicationPath(execution.temporaryRoot, cleanup, "staging_cleanup_failed");
     return {
       capability_id: "validate.markdown",
-      report: jsonValue(report),
+      report,
       diagnostics: execution.completed.diagnostics,
       metrics: execution.completed.metrics,
       diagnostic_summary: diagnosticSummary({
@@ -744,7 +764,7 @@ async function executeTask(
         };
       },
     });
-    return { completed, temporaryRoot };
+    return { completed, temporaryRoot, inputs };
   } catch (error) {
     const publication = newPublication();
     await cleanupPublicationPath(temporaryRoot, publication, "staging_cleanup_failed");
@@ -1300,14 +1320,6 @@ function stringArray(value: unknown, field: string): string[] {
     throw new DocWenMachineError("docwen_machine_protocol_error", `${field} must be a string array.`);
   }
   return [...value];
-}
-
-function jsonValue(value: unknown): JsonObject | string | number | boolean | null | unknown[] {
-  if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
-    return value as string | number | boolean | null;
-  }
-  if (Array.isArray(value)) return value.map(jsonValue);
-  return requiredObject(value, "JSON value");
 }
 
 export const clientTesting = {
