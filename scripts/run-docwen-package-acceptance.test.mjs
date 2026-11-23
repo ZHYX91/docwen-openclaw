@@ -50,6 +50,7 @@ describe("plugin archive used by the acceptance wrapper", () => {
       'import { join } from "node:path";',
       'import process from "node:process";',
       'const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");',
+      'export async function runDocWenMachineQuery() { return { result: { capabilities: [{operation:"convert",input_shape:{slots:[{role:"source",media_types:["text/markdown"]}]}}] } }; }',
       "export async function runDocWenMachineTask({ request }) {",
       "  writeFileSync(process.env.ARCHIVE_CLIENT_TEST_MARKER, JSON.stringify({ module: import.meta.url, profile: process.env.DOCWEN_DATA_DIR, config: process.env.DOCWEN_CONFIG_DIR ?? null }));",
       '  const markdown = request.capability_id === "convert.docx.to_markdown";',
@@ -67,7 +68,15 @@ describe("plugin archive used by the acceptance wrapper", () => {
       "}",
     ].join("\n");
     makeCandidate(plugin, {
-      contentsByPath: new Map([["dist/docwen/machine-client.js", Buffer.from(source)]]),
+      contentsByPath: new Map([
+        ["dist/docwen/machine-client.js", Buffer.from(source)],
+        [
+          "dist/docwen/client.js",
+          Buffer.from(
+            'export const clientTesting = {inputMediaTypes:{".md":"text/markdown"},parseCapability: value => value};',
+          ),
+        ],
+      ]),
     });
     await runPackageAcceptance({
       ...process.env,
