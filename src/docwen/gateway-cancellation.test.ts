@@ -82,7 +82,7 @@ function closeInput(afterClose) {
 function handle(message) {
   fs.appendFileSync(trace, JSON.stringify({direction:'in', message})+'\n');
   const reply = result => send({jsonrpc:'2.0',id:message.id,result});
-  const notify = method => send({jsonrpc:'2.0',method,params:{task_id:'task.1',sequence:++sequence,state:'running'}});
+  const notify = method => send({jsonrpc:'2.0',method,params:{task_id:'task.1',sequence:++sequence,...(method==='task/progress'?{phase:'conversion',completed:10,total:100,unit:'percent'}:{})}});
   switch(message.method) {
     case 'initialize': reply({protocol:{name:'docwen.machine',major:2,minor:0},server:{name:'DocWen',version:'0.12.1'},artifact_bundle_schema:'docwen.artifact_bundle.v3'}); break;
     case 'capability/list': reply({capabilities:[{capability_id:'transform.markdown.heading_numbering',operation:'transform',input_shape:{slots:[{role:'source',kind:'document',media_types:['text/markdown'],min_items:1,max_items:1}],undeclared_roles:'reject'},output_media_types:['text/markdown'],output_shape:{cardinality:'one',artifact_kinds:['document'],relation_types:[],atomic_bundle:true},options_schema:{},availability:'available',dependencies:[],limitations:[]}]}); break;

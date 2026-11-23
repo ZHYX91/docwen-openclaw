@@ -180,6 +180,18 @@ class FakeChild extends EventEmitter {
       return;
     }
     if (message.method === "task/execute") {
+      if (serverState.behavior === "progress_before_accept") {
+        queueMicrotask(() =>
+          this.notify("task/progress", {
+            task_id: "task.1",
+            sequence: 1,
+            phase: "conversion",
+            completed: 10,
+            total: 100,
+            unit: "percent",
+          }),
+        );
+      }
       this.reply(id, { task_id: "task.1", state: "accepted" });
       serverState.executeSeen = true;
       if (
@@ -203,6 +215,20 @@ class FakeChild extends EventEmitter {
         );
         return;
       }
+      if (serverState.behavior === "unexpected_response")
+        this.reply(id, { task_id: "task.1", state: "accepted" });
+      if (serverState.behavior === "invalid_progress") {
+        queueMicrotask(() =>
+          this.notify("task/progress", {
+            task_id: "task.1",
+            sequence: 1,
+            phase: "conversion",
+            completed: 101,
+            total: 100,
+            unit: "percent",
+          }),
+        );
+      }
       const output = ((this.taskPlan!.output as JsonObject).staging_root as JsonObject).path as string;
       const artifactPath = path.join(output, "output.md");
       const bytes = Buffer.from("# output\n", "utf8");
@@ -211,7 +237,7 @@ class FakeChild extends EventEmitter {
       queueMicrotask(() =>
         this.notify("task/completed", {
           task_id: "task.1",
-          sequence: 1,
+          sequence: ["progress_before_accept", "invalid_progress"].includes(serverState.behavior) ? 2 : 1,
           bundle: {
             schema: "docwen.artifact_bundle.v3",
             bundle_id: "bundle.1",
@@ -480,6 +506,9 @@ describe("DocWen Machine Protocol client", () => {
   it.each([
     "nonmonotonic",
     "wrong_progress_task",
+    "progress_before_accept",
+    "unexpected_response",
+    "invalid_progress",
     "wrong_jsonrpc",
     "duplicate_terminal",
     "progress_after_terminal",
