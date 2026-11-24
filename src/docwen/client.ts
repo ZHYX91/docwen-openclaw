@@ -632,7 +632,12 @@ async function persistentTask(
 ): Promise<JsonObject> {
   const outputDir = requiredAbsolutePath(params, "outputDir");
   const overwrite = optionalBoolean(params, "overwrite") ?? false;
-  const initialDestination = await preflightOutputDirectory(outputDir, overwrite, signal);
+  const initialDestination = await preflightOutputDirectory(
+    outputDir,
+    overwrite,
+    signal,
+    inputs.map((input) => input.file),
+  );
   const execution = await executeTask(binaryPath, selection, inputs, options, config, signal, preparedInputs);
   try {
     const committed = await atomicCommitBundle(

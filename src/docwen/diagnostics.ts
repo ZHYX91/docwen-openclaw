@@ -63,6 +63,7 @@ register("conflict", "wait_for_active_writer", ["docwen_output_busy"]);
 register("invalid_request", "choose_new_output_directory", [
   "docwen_output_not_directory",
   "docwen_output_too_broad",
+  "docwen_output_contains_input",
 ]);
 register("output_failed", "review_failure", [
   "docwen_output_failed",

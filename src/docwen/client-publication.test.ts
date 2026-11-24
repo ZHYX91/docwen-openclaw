@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -132,6 +132,55 @@ async function input() {
 }
 
 describe("write tool publication results", () => {
+  it.each(["source", "linked resource", "aliased input"] as const)(
+    "rejects an overwrite containing the %s before planning",
+    async (mode) => {
+      const file = await input();
+      const root = path.dirname(file);
+      const output = path.join(root, "previous");
+      const assets = path.join(output, "assets");
+      await mkdir(assets, { recursive: true });
+      const asset = path.join(assets, "photo.png");
+      await writeFile(asset, "original image");
+      const alias = path.join(root, "images");
+      if (mode === "aliased input") await symlink(assets, alias, "junction");
+      const result =
+        mode === "source"
+          ? await executeDocWenTool(
+              "docwen_number_markdown",
+              { file, operation: "add", outputDir: root, overwrite: true },
+              {},
+            )
+          : await executeDocWenTool(
+              "docwen_convert",
+              {
+                inputs: [
+                  { file, kind: "document", role: "source", logicalPath: "report.md" },
+                  {
+                    file: mode === "aliased input" ? path.join(alias, "photo.png") : asset,
+                    kind: "resource",
+                    role: "linked_resource",
+                    logicalPath: "assets/photo.png",
+                  },
+                ],
+                to: "docx",
+                outputDir: output,
+                overwrite: true,
+              },
+              {},
+            );
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "docwen_output_contains_input" },
+        publication: { state: "not_published" },
+        diagnostic_summary: { recovery_action: "choose_new_output_directory" },
+      });
+      expect(mocks.query).not.toHaveBeenCalled();
+      expect(await readFile(file, "utf8")).toBe("# Original\n");
+      expect(await readFile(asset, "utf8")).toBe("original image");
+    },
+  );
+
   it.each([false, true])(
     "checks output filesystem before starting conversion (inPlace=%s)",
     async (inPlace) => {

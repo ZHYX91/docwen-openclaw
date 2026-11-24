@@ -1,8 +1,8 @@
 import { constants as fsConstants } from "node:fs";
-import { chmod, copyFile, lstat, mkdir, mkdtemp, rename } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, realpath, rename } from "node:fs/promises";
 import * as path from "node:path";
 
-import { DocWenMachineError, type ValidatedArtifactBundle } from "./machine-client.js";
+import { DocWenMachineError, isContainedPath, type ValidatedArtifactBundle } from "./machine-client.js";
 import {
   assertCopiedArtifact,
   assertDirectorySnapshotUnchanged,
@@ -40,6 +40,7 @@ export async function preflightOutputDirectory(
   destination: string,
   overwrite: boolean,
   signal?: AbortSignal,
+  inputPaths: readonly string[] = [],
 ): Promise<DirectorySnapshot | null> {
   assertSafeDestination(destination);
   assertDirectoryPublicationSupported();
@@ -57,6 +58,20 @@ export async function preflightOutputDirectory(
       "docwen_output_exists",
       "Bundle output directory already exists; set overwrite=true explicitly.",
     );
+  }
+  if (existing && inputPaths.length > 0) {
+    const canonicalDirectory = await realpath(destination);
+    for (const input of inputPaths) {
+      signal?.throwIfAborted();
+      if (!path.isAbsolute(input))
+        throw new DocWenMachineError("docwen_path_not_absolute", "Input path must be absolute.");
+      if (isContainedPath(destination, input) || isContainedPath(canonicalDirectory, await realpath(input))) {
+        throw new DocWenMachineError(
+          "docwen_output_contains_input",
+          "The output folder contains an input file. Choose a separate folder to preserve the original.",
+        );
+      }
+    }
   }
   const snapshot = existing ? await captureDirectorySnapshot(destination, signal) : null;
   await preflightPublication(destination, "directory", signal);
