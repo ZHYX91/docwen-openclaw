@@ -6,6 +6,7 @@ import type { DocWenPluginConfig } from "../config.js";
 import { WRITE_TOOL_NAMES } from "../tools/catalog.js";
 import {
   DocWenMachineError,
+  isContainedPath,
   type JsonObject,
   type MachineCapability,
   type MachineInputHandle,
@@ -628,15 +629,14 @@ async function persistentTask(
   params: Params,
   config: DocWenPluginConfig,
   signal?: AbortSignal,
-  preparedInputs?: MachineInputHandle[],
 ): Promise<JsonObject> {
   const outputDir = requiredAbsolutePath(params, "outputDir");
   const overwrite = optionalBoolean(params, "overwrite") ?? false;
-  const initialDestination = await preflightOutputDirectory(
-    outputDir,
-    overwrite,
+  const initialDestination = await preflightOutputDirectory(outputDir, overwrite, signal);
+  const preparedInputs = await buildInputHandles(
+    inputs,
     signal,
-    inputs.map((input) => input.file),
+    initialDestination ? { requested: outputDir, canonical: initialDestination.canonicalPath } : undefined,
   );
   const execution = await executeTask(binaryPath, selection, inputs, options, config, signal, preparedInputs);
   try {
@@ -913,6 +913,7 @@ function capabilityAcceptsInputs(
 async function buildInputHandles(
   inputSpecs: readonly InputSpec[],
   signal?: AbortSignal,
+  replacedDirectory?: { requested: string; canonical: string },
 ): Promise<MachineInputHandle[]> {
   signal?.throwIfAborted();
   if (inputSpecs.length === 0)
@@ -936,6 +937,16 @@ async function buildInputHandles(
       throw new DocWenMachineError("docwen_input_not_regular_file", `Input is not a regular file: ${file}`);
     }
     const canonicalPath = await realpath(file);
+    if (
+      replacedDirectory &&
+      (isContainedPath(replacedDirectory.requested, file) ||
+        isContainedPath(replacedDirectory.canonical, canonicalPath))
+    ) {
+      throw new DocWenMachineError(
+        "docwen_output_contains_input",
+        "The output folder contains an input file. Choose a separate folder to preserve the original.",
+      );
+    }
     const key = process.platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
     if (canonicalPaths.has(key))
       throw new DocWenMachineError("docwen_duplicate_input", `Duplicate input: ${file}`);

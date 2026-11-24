@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ import * as publisher from "./publish-path.js";
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
   task: vi.fn(),
+  afterPreflight: vi.fn<() => Promise<void>>(),
   hooks: {} as {
     beforeSwap?: () => Promise<void>;
     afterBackupMove?: (backup: string) => Promise<void>;
@@ -49,6 +50,11 @@ vi.mock("./output-transaction.js", async (original) => {
   const actual = await original<typeof OutputTransactionModule>();
   return {
     ...actual,
+    preflightOutputDirectory: async (...args: Parameters<typeof actual.preflightOutputDirectory>) => {
+      const snapshot = await actual.preflightOutputDirectory(...args);
+      await mocks.afterPreflight();
+      return snapshot;
+    },
     atomicCommitBundle: (...args: Parameters<typeof actual.atomicCommitBundle>) => {
       const [bundle, destination, overwrite, hooks, initial] = args;
       return actual.atomicCommitBundle(bundle, destination, overwrite, { ...hooks, ...mocks.hooks }, initial);
@@ -83,6 +89,7 @@ const capability = {
 };
 beforeEach(() => {
   mocks.hooks = {};
+  mocks.afterPreflight.mockReset();
   mocks.query.mockReset().mockResolvedValue({ initialize: {}, result: { capabilities: [capability] } });
   mocks.task.mockReset().mockImplementation(async ({ request }): Promise<MachineTaskCompleted> => {
     const file = path.join(request.output.staging_root.path, "result.md");
@@ -132,7 +139,7 @@ async function input() {
 }
 
 describe("write tool publication results", () => {
-  it.each(["source", "linked resource", "aliased input"] as const)(
+  it.each(["source", "linked resource", "aliased input", "retargeted input"] as const)(
     "rejects an overwrite containing the %s before planning",
     async (mode) => {
       const file = await input();
@@ -144,6 +151,14 @@ describe("write tool publication results", () => {
       await writeFile(asset, "original image");
       const alias = path.join(root, "images");
       if (mode === "aliased input") await symlink(assets, alias, "junction");
+      if (mode === "retargeted input") {
+        await writeFile(path.join(root, "photo.png"), "outside image");
+        await symlink(root, alias, "junction");
+        mocks.afterPreflight.mockImplementationOnce(async () => {
+          await rename(alias, path.join(root, "old-images"));
+          await symlink(assets, alias, "junction");
+        });
+      }
       const result =
         mode === "source"
           ? await executeDocWenTool(
@@ -157,7 +172,7 @@ describe("write tool publication results", () => {
                 inputs: [
                   { file, kind: "document", role: "source", logicalPath: "report.md" },
                   {
-                    file: mode === "aliased input" ? path.join(alias, "photo.png") : asset,
+                    file: mode === "linked resource" ? asset : path.join(alias, "photo.png"),
                     kind: "resource",
                     role: "linked_resource",
                     logicalPath: "assets/photo.png",
@@ -271,6 +286,7 @@ describe("write tool publication results", () => {
     expect(await readdir(path.dirname(file))).toEqual(["source.md"]);
     expect(mocks.task).toHaveBeenCalledTimes(1);
     mocks.hooks = {};
+    mocks.afterPreflight.mockReset();
     expect(
       await executeDocWenTool("docwen_number_markdown", { file, operation: "add", inPlace: true }, {}),
     ).toMatchObject({ status: "success" });
