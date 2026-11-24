@@ -14,7 +14,7 @@ const outputDirectoryValue = () =>
   Type.String({
     minLength: 1,
     description:
-      "Full path to the output folder on the Gateway computer. Use a separate folder from the inputs. All generated files are saved together here.",
+      "Full path to the output folder on the Gateway computer. Choose a folder that contains none of the input files. All generated files are saved together here.",
   });
 const overwriteValue = () => Type.Optional(Type.Boolean({ default: false }));
 const logicalPathValue = () =>
