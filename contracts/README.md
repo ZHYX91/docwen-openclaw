@@ -3,7 +3,8 @@
 `docwen/` is a revision-bound snapshot of the [DocWen normative contracts](https://github.com/ZHYX91/docwen/tree/main/contracts).
 Its `snapshot.json` records the source commit, original Git blob digests, exported digests and inventory.
 JSON whitespace is normalized without changing data. The included AGPL-3.0-or-later license applies to
-the vendored test data; it does not replace this plugin's MIT license. These files are excluded from the runtime package.
+the vendored contracts. The runtime package includes this note, the upstream license and the proofreading report
+schema used to validate completed tasks. The remaining snapshot files are used for source tests.
 
 The ordinary source test command validates the complete snapshot and all schema expectations. It also
 runs framing fixtures through the actual decoder and Bundle fixtures through the actual consumer validator,

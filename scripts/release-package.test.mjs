@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import process from "node:process";
 import { makeTarball } from "./testing/release-fixtures.mjs";
@@ -14,6 +15,19 @@ import {
 } from "./release-package-lib.mjs";
 
 describe("release tarball verification", () => {
+  it("matches npm's actual source checkout inventory before staging the release", () => {
+    const [pack] = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [process.env.npm_execpath, "pack", "--dry-run", "--ignore-scripts", "--json"],
+        { encoding: "utf8" },
+      ),
+    );
+    // A clean checkout has no dist yet. The release gate verifies every compiled file separately.
+    const sourcePaths = (paths) => paths.filter((path) => !path.startsWith("dist/")).sort();
+    expect(sourcePaths(pack.files.map((file) => file.path))).toEqual(sourcePaths(RELEASE_FILES));
+  }, 15_000);
+
   it("accepts the exact regular-file package contract", () => {
     const result = verifyTarballBuffer(makeTarball());
     expect([...result.entries.keys()].sort()).toEqual(RELEASE_FILES);

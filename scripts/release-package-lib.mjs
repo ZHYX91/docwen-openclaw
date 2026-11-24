@@ -41,6 +41,7 @@ export const RELEASE_FILES = Object.freeze(
     "LICENSE",
     "README.md",
     "native/README.md",
+    "contracts/README.md",
     "contracts/docwen/LICENSE",
     "contracts/docwen/schemas/docwen.proofread_report.v2.schema.json",
     "dist/config.d.ts",
