@@ -508,29 +508,48 @@ export async function runDocWenMachineTask(options: {
         progress.push(params);
         continue;
       }
-      if (message.method === "task/failed") throw remoteTaskError(params);
+      if (message.method === "task/failed") {
+        terminalDiagnostics(params);
+        throw remoteTaskError(params);
+      }
       if (message.method === "task/cancelled") {
+        terminalDiagnostics(params);
         throw new DocWenMachineError("docwen_machine_cancelled", "DocWen task was cancelled.");
       }
       if (message.method !== "task/completed") throw protocolError("unexpected Machine notification");
       if (options.signal?.aborted) {
         throw new DocWenMachineError("docwen_machine_cancelled", "DocWen task was cancelled.");
       }
+      const bundle = await validateArtifactBundle(
+        params.bundle,
+        request.output.staging_root.path,
+        taskId,
+        options.signal,
+      );
       return {
         taskId,
         plan,
-        bundle: await validateArtifactBundle(
-          params.bundle,
-          request.output.staging_root.path,
-          taskId,
-          options.signal,
-        ),
-        diagnostics: objectArray(params.diagnostics, "terminal.diagnostics"),
+        bundle,
+        diagnostics: terminalDiagnostics(params, bundle),
         metrics: requiredObject(params.metrics, "terminal.metrics"),
         progress,
       };
     }
   });
+}
+
+function terminalDiagnostics(params: JsonObject, bundle?: ValidatedArtifactBundle): JsonObject[] {
+  const diagnostics = objectArray(params.diagnostics, "terminal.diagnostics");
+  const artifactIds = new Set(bundle?.artifacts.map((item) => item.artifact_id));
+  for (const item of diagnostics) {
+    if (
+      item.artifact_id !== undefined &&
+      (typeof item.artifact_id !== "string" || !artifactIds.has(item.artifact_id))
+    ) {
+      throw protocolError("terminal diagnostic references an undelivered artifact");
+    }
+  }
+  return diagnostics;
 }
 
 async function withSession<T>(

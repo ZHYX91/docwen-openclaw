@@ -214,6 +214,7 @@ class FakeChild extends EventEmitter {
       if (serverState.behavior === "remote_failure" || serverState.behavior === "remote_task_cleanup") {
         queueMicrotask(() =>
           this.notify("task/failed", {
+            diagnostics: [],
             task_id: "task.1",
             sequence: 1,
             error: {
@@ -286,6 +287,8 @@ class FakeChild extends EventEmitter {
       if (serverState.behavior === "cancel_ack_only") return;
       queueMicrotask(() =>
         this.notify("task/cancelled", {
+          reason: "Cancelled.",
+          diagnostics: [],
           task_id: "task.1",
           sequence: 1,
         }),
@@ -549,6 +552,45 @@ describe("DocWen Machine Protocol client", () => {
     const invocation = await taskInvocation();
     await expect(runDocWenMachineTask(invocation.options)).rejects.toMatchObject({ code, message });
   });
+
+  it.each(["valid", "missing", "failed", "cancelled"] as const)(
+    "binds terminal diagnostic artifact IDs to the delivered bundle (%s)",
+    async (mode) => {
+      const trace = JSON.parse(
+        readFileSync(
+          "contracts/docwen/fixtures/invalid/machine.dangling-diagnostic-artifact.trace.json",
+          "utf8",
+        ),
+      );
+      const invocation = await taskInvocation();
+      const terminal = trace[2];
+      const params = terminal.params;
+      if (mode === "failed" || mode === "cancelled") {
+        terminal.method = `task/${mode}`;
+        delete params.bundle;
+        delete params.metrics;
+        if (mode === "failed")
+          params.error = { category: "internal", code: "failed", message: "Task failed.", retryable: false };
+        else params.reason = "Cancelled.";
+      } else {
+        // Upstream traces contain illustrative hashes. Bind it to the real staged byte.
+        const artifact = params.bundle.artifacts[0];
+        writeFileSync(path.join(invocation.staging, artifact.locator), "x");
+        artifact.sha256 = createHash("sha256").update("x").digest("hex");
+        if (mode === "valid") params.diagnostics[0].artifact_id = artifact.artifact_id;
+      }
+      spawnMock.mockImplementationOnce(() => new FakeChild(trace));
+      const operation = runDocWenMachineTask(invocation.options);
+      if (mode === "valid") {
+        await expect(operation).resolves.toMatchObject({ diagnostics: params.diagnostics });
+      } else {
+        await expect(operation).rejects.toMatchObject({
+          code: "docwen_machine_protocol_error",
+          message: "terminal diagnostic references an undelivered artifact",
+        });
+      }
+    },
+  );
 
   it.each([
     "wrong_progress_task",
