@@ -73,7 +73,7 @@ kernel wait-parenthood without reaping, then signals through a pidfd. It never
 signals an unrelated process based on a name or a historical PID/start-time
 snapshot. Repeated adoption, termination and reaping end only when `waitpid`
 reports `ECHILD`; an empty procfs candidate listing is not completion. The
-supported kernel must provide pidfds and mounted procfs; failure remains
+supported kernel must provide pidfds and readable procfs task child lists. The launcher checks the latter before preparing its native owner. During teardown, failure remains
 unconfirmed rather than falling back to unowned numeric signals.
 
 The package stores the ELF as ordinary data. On Linux x64 the launcher verifies
