@@ -54,7 +54,7 @@ The separate `convert.markdown.to_docx` capability is for integrations that alre
 
 `docwen_convert` accepts an optional `optimization` resource ID. It selects a unique available transform capability whose `optimization_id`, typed input shape, and output media type match the request. A resource listing alone does not make an optimizer executable. Legacy Word inputs also require an available preconversion chain; an unavailable or ambiguous optimization fails without reverting to ordinary conversion. Options must satisfy the selected capability's contract.
 
-`docwen_number_markdown` is the sole exception: it requires exactly one of an `outputDir` or `inPlace=true`. In-place replacement is performed only after the returned artifact has passed path, graph, size, and SHA-256 validation.
+`docwen_number_markdown` is the sole exception: it requires exactly one of an `outputDir` or `inPlace=true`. After verifying the returned Markdown, the plugin replaces the canonical source path passed to Machine and reports that path. If the requested path resolves to a different file before publication, the task fails with `docwen_source_changed`.
 
 ## Testing and package acceptance
 

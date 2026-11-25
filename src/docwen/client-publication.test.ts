@@ -1,5 +1,15 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -193,6 +203,49 @@ describe("write tool publication results", () => {
       expect(mocks.query).not.toHaveBeenCalled();
       expect(await readFile(file, "utf8")).toBe("# Original\n");
       expect(await readFile(asset, "utf8")).toBe("original image");
+    },
+  );
+
+  it.each(["stable", "retargeted"] as const)(
+    "binds in-place numbering to the prepared input through a %s directory alias",
+    async (mode) => {
+      const root = path.dirname(await input());
+      const original = path.join(root, "first");
+      const unrelated = path.join(root, "second");
+      const alias = path.join(root, "active");
+      const relative = path.join("notes", "copy.md");
+      for (const folder of [original, unrelated]) {
+        await mkdir(path.join(folder, "notes"), { recursive: true });
+        await writeFile(path.join(folder, relative), "# Identical text\n");
+      }
+      await symlink(original, alias, "junction");
+      const originalFile = await realpath(path.join(original, relative));
+      const task = mocks.task.getMockImplementation()!;
+      mocks.task.mockImplementationOnce(async (options) => {
+        expect(options.request.inputs[0].locator.path).toBe(originalFile);
+        if (mode === "retargeted") {
+          await rm(alias);
+          await symlink(unrelated, alias, "junction");
+        }
+        return task(options);
+      });
+      const result = await executeDocWenTool(
+        "docwen_number_markdown",
+        { file: path.join(alias, relative), operation: "add", inPlace: true },
+        {},
+      );
+      if (mode === "retargeted") {
+        expect(result).toMatchObject({
+          status: "failed",
+          error: { code: "docwen_source_changed" },
+          publication: { state: "not_published" },
+        });
+        expect(await readFile(originalFile, "utf8")).toBe("# Identical text\n");
+      } else {
+        expect(result).toMatchObject({ status: "success", output: { preferred_artifact: originalFile } });
+        expect(await readFile(originalFile, "utf8")).toBe("# 1. Result\n");
+      }
+      expect(await readFile(path.join(unrelated, relative), "utf8")).toBe("# Identical text\n");
     },
   );
 

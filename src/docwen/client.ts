@@ -573,10 +573,11 @@ async function numberMarkdown(
     );
   }
   const preparedInputs = await buildInputHandles([input], signal);
+  const source = preparedInputs[0]!;
   await preflightPublication(file, "file", signal);
   const sourceVersion = {
-    sizeBytes: preparedInputs[0]!.size_bytes,
-    sha256: preparedInputs[0]!.sha256,
+    sizeBytes: source.size_bytes,
+    sha256: source.sha256,
   };
   const execution = await executeTask(
     binaryPath,
@@ -595,8 +596,11 @@ async function numberMarkdown(
         "Numbering did not return one preferred Markdown document.",
       );
     }
+    if ((await realpath(file)) !== source.locator.path) {
+      throw new DocWenMachineError("docwen_source_changed", "The input path now points to a different file.");
+    }
     const committed = await atomicReplaceFile(
-      file,
+      source.locator.path,
       preferred.absolutePath,
       {
         sizeBytes: preferred.size_bytes,
