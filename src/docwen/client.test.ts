@@ -127,7 +127,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
     };
 
     const committed = await atomicCommitBundle(bundle, output, false);
-    expect(await readFile(committed.value.preferredArtifactPath, "utf8")).toBe("# Result\n");
+    expect(await readFile(committed.value.preferredArtifactPath!, "utf8")).toBe("# Result\n");
     expect(await readFile(path.join(output, "report", "assets", "image.png"))).toEqual(image);
     expect(await readdir(output)).toEqual(["report"]);
     expect(committed.publication).toEqual({ state: "published", retry: "do_not_retry", warnings: [] });
@@ -172,7 +172,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
       },
     });
 
-    expect(await readFile(committed.value.preferredArtifactPath, "utf8")).toBe("new");
+    expect(await readFile(committed.value.preferredArtifactPath!, "utf8")).toBe("new");
     expect(committed.publication).toMatchObject({
       state: "published",
       retry: "do_not_retry",

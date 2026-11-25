@@ -3,8 +3,9 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import peerBundle from "../../contracts/docwen/fixtures/valid/artifact-bundle.pdf-split.json" with { type: "json" };
 import { executeDocWenTool } from "./client.js";
-import { DocWenMachineError, type MachineTaskCompleted } from "./machine-client.js";
+import { DocWenMachineError, validateArtifactBundle, type MachineTaskCompleted } from "./machine-client.js";
 import type * as MachineClientModule from "./machine-client.js";
 import type * as OutputTransactionModule from "./output-transaction.js";
 import * as publisher from "./publish-path.js";
@@ -132,6 +133,68 @@ async function input() {
 }
 
 describe("write tool publication results", () => {
+  it("publishes both PDF peers when Core designates no preferred entry", async () => {
+    const directory = path.dirname(await input());
+    const file = path.join(directory, "source.pdf");
+    const outputDir = path.join(directory, "split");
+    await writeFile(file, "original");
+    mocks.query.mockResolvedValue({
+      result: {
+        capabilities: [
+          {
+            ...capability,
+            capability_id: "split.pdf.partition",
+            input_shape: {
+              slots: [
+                {
+                  role: "source",
+                  kind: "resource",
+                  media_types: ["application/pdf"],
+                  min_items: 1,
+                  max_items: 1,
+                },
+              ],
+              undeclared_roles: "reject",
+            },
+            output_media_types: ["application/pdf"],
+            output_shape: { ...capability.output_shape, cardinality: "many" },
+          },
+        ],
+      },
+    });
+    mocks.task.mockImplementationOnce(async ({ request }) => {
+      const source = structuredClone(peerBundle);
+      const staging = request.output.staging_root.path;
+      for (const artifact of source.artifacts) {
+        const target = path.join(staging, artifact.locator);
+        const bytes = Buffer.from(artifact.artifact_id);
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, bytes);
+        artifact.sha256 = createHash("sha256").update(bytes).digest("hex");
+        artifact.size_bytes = bytes.length;
+      }
+      return {
+        taskId: source.task_id,
+        plan: { capability_id: request.capability_id },
+        diagnostics: [],
+        metrics: {},
+        progress: [],
+        bundle: await validateArtifactBundle(source, staging, source.task_id),
+      };
+    });
+    const result = await executeDocWenTool("docwen_split_pdf", { file, pages: "1,2", outputDir }, {});
+    const outputs = peerBundle.artifacts.map((artifact) => path.join(outputDir, artifact.logical_path));
+    expect(result).toMatchObject({
+      status: "success",
+      output: { preferred_artifact: null, artifacts: outputs },
+      bundle: { entries: peerBundle.entries },
+    });
+    expect(await Promise.all(outputs.map((output) => readFile(output, "utf8")))).toEqual(
+      peerBundle.artifacts.map((artifact) => artifact.artifact_id),
+    );
+    expect(await readFile(file, "utf8")).toBe("original");
+  });
+
   it.each([false, true])(
     "checks output filesystem before starting conversion (inPlace=%s)",
     async (inPlace) => {
