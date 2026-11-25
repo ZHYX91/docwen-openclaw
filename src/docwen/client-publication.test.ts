@@ -145,7 +145,8 @@ async function input() {
   roots.push(root);
   const file = path.join(root, "source.md");
   await writeFile(file, "# Original\n");
-  return file;
+  // Windows TEMP can use an 8.3 path even when no junction is under test.
+  return realpath(file);
 }
 
 describe("write tool publication results", () => {
