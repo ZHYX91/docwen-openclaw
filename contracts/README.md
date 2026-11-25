@@ -4,7 +4,7 @@
 Its `snapshot.json` records the source commit, original Git blob digests, exported digests and inventory.
 JSON whitespace is normalized without changing data. The included AGPL-3.0-or-later license applies to
 the vendored contracts. The runtime package includes this note, the upstream license and the proofreading report
-schema used to validate completed tasks. The remaining snapshot files are used for source tests.
+schema used to validate completed tasks. The remaining snapshot files are used for source tests. Keep packaging information here so the exported snapshot can be verified byte for byte.
 
 The ordinary source test command validates the complete snapshot and all schema expectations. It also
 runs framing fixtures through the actual decoder and Bundle fixtures through the actual consumer validator,

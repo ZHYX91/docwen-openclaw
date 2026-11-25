@@ -3,7 +3,7 @@
   "source_repository": "https://github.com/ZHYX91/DocWen",
   "source_commit": "6344346a1a7a333c0c0e1ff89e59da7b5e587718",
   "normalization": "JSON: UTF-8, two-space indentation, one LF; data unchanged. Other files: original Git blob bytes.",
-  "license": "AGPL-3.0-or-later (the proofreading report schema is also distributed with the plugin; see LICENSE)",
+  "license": "AGPL-3.0-or-later (vendored test data only; see LICENSE)",
   "files": [
     {
       "path": "LICENSE",
