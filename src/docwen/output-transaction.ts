@@ -100,6 +100,25 @@ export async function atomicCommitBundle(
           await copyFile(artifact.absolutePath, target, fsConstants.COPYFILE_EXCL);
           await assertCopiedArtifact(target, artifact.size_bytes, artifact.sha256, hooks.signal);
         }
+        if (expected && process.platform === "linux") {
+          const fresh = await lstat(candidate, { bigint: true });
+          const previous = expected.root;
+          if (fresh.uid !== previous.uid || fresh.gid !== previous.gid) {
+            throw new DocWenMachineError(
+              "docwen_output_permissions_unsupported",
+              "The replacement folder would have a different owner or group. Choose a new output folder.",
+            );
+          }
+          // Preserve restrictions from both directories, including the old sticky/setgid policy.
+          const mode = (previous.mode & fresh.mode & 0o777n) | (previous.mode & 0o7000n);
+          await chmod(candidate, Number(mode));
+          if (((await lstat(candidate, { bigint: true })).mode & 0o7777n) !== mode) {
+            throw new DocWenMachineError(
+              "docwen_output_permissions_unsupported",
+              "The filesystem could not apply the output folder permissions. Choose a new output folder.",
+            );
+          }
+        }
       },
       expected ? (current) => assertDirectorySnapshotUnchanged(current, expected, hooks.signal) : undefined,
       expected ? (backup) => assertDirectorySnapshotUnchanged(backup, expected) : undefined,
