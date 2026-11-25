@@ -3,12 +3,12 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import peerBundle from "../../contracts/docwen/fixtures/valid/artifact-bundle.pdf-split.json" with { type: "json" };
 import { executeDocWenTool } from "./client.js";
 import { DocWenMachineError, validateArtifactBundle, type MachineTaskCompleted } from "./machine-client.js";
 import type * as MachineClientModule from "./machine-client.js";
 import type * as OutputTransactionModule from "./output-transaction.js";
 import * as publisher from "./publish-path.js";
+import peerBundle from "../../contracts/docwen/fixtures/valid/artifact-bundle.pdf-split.json" with { type: "json" };
 
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
@@ -133,35 +133,85 @@ async function input() {
 }
 
 describe("write tool publication results", () => {
+  it.each([false, true])(
+    "checks output filesystem before starting conversion (inPlace=%s)",
+    async (inPlace) => {
+      const file = await input();
+      vi.spyOn(publisher, "publishPathNoReplace").mockRejectedValue(
+        Object.assign(new Error("unsupported"), { code: "EINVAL" }),
+      );
+      const result = await executeDocWenTool(
+        "docwen_number_markdown",
+        {
+          file,
+          operation: "add",
+          ...(inPlace ? { inPlace: true } : { outputDir: path.join(path.dirname(file), "result") }),
+        },
+        {},
+      );
+      expect(result).toMatchObject({
+        diagnostic_summary: { error_category: "unsupported", recovery_action: "choose_supported_filesystem" },
+      });
+      expect(mocks.task).not.toHaveBeenCalled();
+      expect(await readFile(file, "utf8")).toBe("# Original\n");
+      expect(await readdir(path.dirname(file))).toEqual(["source.md"]);
+    },
+  );
+
+  const splitCapability = {
+    capability_id: "split.pdf.partition",
+    operation: "transform",
+    input_shape: {
+      slots: [
+        {
+          role: "source",
+          kind: "resource",
+          media_types: ["application/pdf"],
+          min_items: 1,
+          max_items: 1,
+        },
+      ],
+      undeclared_roles: "reject",
+    },
+    output_media_types: ["application/pdf"],
+    output_shape: {
+      cardinality: "many",
+      artifact_kinds: ["document"],
+      relation_types: [],
+      atomic_bundle: true,
+    },
+    options_schema: {},
+    availability: "available",
+    dependencies: [],
+    limitations: [],
+  };
+  it("sends public PDF split inputs as resources before task planning", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "docwen-pdf-split-kind-"));
+    roots.push(root);
+    const file = path.join(root, "source.pdf");
+    const outputDir = path.join(root, "split-output");
+    await writeFile(file, Buffer.from("%PDF-1.4\n"));
+
+    mocks.query.mockResolvedValue({ initialize: {}, result: { capabilities: [splitCapability] } });
+    let plannedKind: unknown;
+    mocks.task.mockImplementationOnce(async ({ request }) => {
+      plannedKind = request.inputs[0]?.kind;
+      throw new DocWenMachineError("probe_stop", "planned");
+    });
+
+    const result = await executeDocWenTool("docwen_split_pdf", { file, pages: "1", outputDir }, {});
+
+    expect(plannedKind).toBe("resource");
+    expect(result).toMatchObject({ status: "failed", error: { code: "probe_stop" } });
+    await expect(readdir(outputDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("publishes both PDF peers when Core designates no preferred entry", async () => {
     const directory = path.dirname(await input());
     const file = path.join(directory, "source.pdf");
     const outputDir = path.join(directory, "split");
     await writeFile(file, "original");
-    mocks.query.mockResolvedValue({
-      result: {
-        capabilities: [
-          {
-            ...capability,
-            capability_id: "split.pdf.partition",
-            input_shape: {
-              slots: [
-                {
-                  role: "source",
-                  kind: "resource",
-                  media_types: ["application/pdf"],
-                  min_items: 1,
-                  max_items: 1,
-                },
-              ],
-              undeclared_roles: "reject",
-            },
-            output_media_types: ["application/pdf"],
-            output_shape: { ...capability.output_shape, cardinality: "many" },
-          },
-        ],
-      },
-    });
+    mocks.query.mockResolvedValue({ result: { capabilities: [splitCapability] } });
     mocks.task.mockImplementationOnce(async ({ request }) => {
       const source = structuredClone(peerBundle);
       const staging = request.output.staging_root.path;
@@ -193,79 +243,6 @@ describe("write tool publication results", () => {
       peerBundle.artifacts.map((artifact) => artifact.artifact_id),
     );
     expect(await readFile(file, "utf8")).toBe("original");
-  });
-
-  it.each([false, true])(
-    "checks output filesystem before starting conversion (inPlace=%s)",
-    async (inPlace) => {
-      const file = await input();
-      vi.spyOn(publisher, "publishPathNoReplace").mockRejectedValue(
-        Object.assign(new Error("unsupported"), { code: "EINVAL" }),
-      );
-      const result = await executeDocWenTool(
-        "docwen_number_markdown",
-        {
-          file,
-          operation: "add",
-          ...(inPlace ? { inPlace: true } : { outputDir: path.join(path.dirname(file), "result") }),
-        },
-        {},
-      );
-      expect(result).toMatchObject({
-        diagnostic_summary: { error_category: "unsupported", recovery_action: "choose_supported_filesystem" },
-      });
-      expect(mocks.task).not.toHaveBeenCalled();
-      expect(await readFile(file, "utf8")).toBe("# Original\n");
-      expect(await readdir(path.dirname(file))).toEqual(["source.md"]);
-    },
-  );
-
-  it("sends public PDF split inputs as resources before task planning", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "docwen-pdf-split-kind-"));
-    roots.push(root);
-    const file = path.join(root, "source.pdf");
-    const outputDir = path.join(root, "split-output");
-    await writeFile(file, Buffer.from("%PDF-1.4\n"));
-
-    const splitCapability = {
-      capability_id: "split.pdf.partition",
-      operation: "transform",
-      input_shape: {
-        slots: [
-          {
-            role: "source",
-            kind: "resource",
-            media_types: ["application/pdf"],
-            min_items: 1,
-            max_items: 1,
-          },
-        ],
-        undeclared_roles: "reject",
-      },
-      output_media_types: ["application/pdf"],
-      output_shape: {
-        cardinality: "many",
-        artifact_kinds: ["document"],
-        relation_types: [],
-        atomic_bundle: true,
-      },
-      options_schema: {},
-      availability: "available",
-      dependencies: [],
-      limitations: [],
-    };
-    mocks.query.mockResolvedValue({ initialize: {}, result: { capabilities: [splitCapability] } });
-    let plannedKind: unknown;
-    mocks.task.mockImplementationOnce(async ({ request }) => {
-      plannedKind = request.inputs[0]?.kind;
-      throw new DocWenMachineError("probe_stop", "planned");
-    });
-
-    const result = await executeDocWenTool("docwen_split_pdf", { file, pages: "1", outputDir }, {});
-
-    expect(plannedKind).toBe("resource");
-    expect(result).toMatchObject({ status: "failed", error: { code: "probe_stop" } });
-    await expect(readdir(outputDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("honors cancellation immediately before commit and releases the transaction", async () => {
