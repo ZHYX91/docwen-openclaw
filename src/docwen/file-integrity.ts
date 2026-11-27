@@ -16,7 +16,7 @@ export type PathIdentity = Readonly<{
 }>;
 
 export type DirectorySnapshot = Readonly<{
-  root: PathIdentity;
+  root: PathIdentity & { uid: bigint; gid: bigint };
   treeSha256: string;
 }>;
 
@@ -57,7 +57,7 @@ export async function captureDirectorySnapshot(
       "The output target changed while it was inspected.",
     );
   }
-  return { root: pathIdentity(after), treeSha256: hash.digest("hex") };
+  return { root: { ...root, uid: before.uid, gid: before.gid }, treeSha256: hash.digest("hex") };
 }
 
 export async function assertDirectorySnapshotUnchanged(
