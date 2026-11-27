@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -89,7 +89,7 @@ class FakeChild extends EventEmitter {
   private readonly decoder = new MachineFrameDecoder();
   private taskPlan: JsonObject | null = null;
 
-  constructor() {
+  constructor(private readonly executionTrace?: JsonObject[]) {
     super();
     if (serverState.behavior === "stderr_overflow") {
       queueMicrotask(() => this.stderr.write(Buffer.alloc(256 * 1024 + 1)));
@@ -180,6 +180,28 @@ class FakeChild extends EventEmitter {
       return;
     }
     if (message.method === "task/execute") {
+      if (this.executionTrace) {
+        const [first, ...rest] = this.executionTrace;
+        const request = first?.method === "task/execute" ? first : undefined;
+        for (const frame of request ? rest : this.executionTrace) {
+          // Correlate the recorded reply with the live request. Keep unsolicited frames intact.
+          const incoming = request && frame.id === request.id ? { ...frame, id } : frame;
+          this.stdout.write(encodeMachineFrame(incoming));
+        }
+        return;
+      }
+      if (serverState.behavior === "progress_before_accept") {
+        queueMicrotask(() =>
+          this.notify("task/progress", {
+            task_id: "task.1",
+            sequence: 1,
+            phase: "conversion",
+            completed: 10,
+            total: 100,
+            unit: "percent",
+          }),
+        );
+      }
       this.reply(id, { task_id: "task.1", state: "accepted" });
       serverState.executeSeen = true;
       if (
@@ -192,6 +214,7 @@ class FakeChild extends EventEmitter {
       if (serverState.behavior === "remote_failure" || serverState.behavior === "remote_task_cleanup") {
         queueMicrotask(() =>
           this.notify("task/failed", {
+            diagnostics: [],
             task_id: "task.1",
             sequence: 1,
             error: {
@@ -203,6 +226,20 @@ class FakeChild extends EventEmitter {
         );
         return;
       }
+      if (serverState.behavior === "unexpected_response")
+        this.reply(id, { task_id: "task.1", state: "accepted" });
+      if (serverState.behavior === "invalid_progress") {
+        queueMicrotask(() =>
+          this.notify("task/progress", {
+            task_id: "task.1",
+            sequence: 1,
+            phase: "conversion",
+            completed: 101,
+            total: 100,
+            unit: "percent",
+          }),
+        );
+      }
       const output = ((this.taskPlan!.output as JsonObject).staging_root as JsonObject).path as string;
       const artifactPath = path.join(output, "output.md");
       const bytes = Buffer.from("# output\n", "utf8");
@@ -211,7 +248,11 @@ class FakeChild extends EventEmitter {
       queueMicrotask(() =>
         this.notify("task/completed", {
           task_id: "task.1",
-          sequence: 1,
+          sequence: ["progress_before_accept", "invalid_progress", "wrong_progress_task"].includes(
+            serverState.behavior,
+          )
+            ? 2
+            : 1,
           bundle: {
             schema: "docwen.artifact_bundle.v3",
             bundle_id: "bundle.1",
@@ -246,6 +287,8 @@ class FakeChild extends EventEmitter {
       if (serverState.behavior === "cancel_ack_only") return;
       queueMicrotask(() =>
         this.notify("task/cancelled", {
+          reason: "Cancelled.",
+          diagnostics: [],
           task_id: "task.1",
           sequence: 1,
         }),
@@ -260,12 +303,19 @@ class FakeChild extends EventEmitter {
   private notify(method: string, params: JsonObject): void {
     const fault = serverState.behavior;
     const completed = method === "task/completed";
-    if (completed && (fault === "nonmonotonic" || fault === "wrong_progress_task")) {
+    if (completed && fault === "wrong_progress_task") {
       this.stdout.write(
         encodeMachineFrame({
           jsonrpc: "2.0",
           method: "task/progress",
-          params: { task_id: fault === "wrong_progress_task" ? "task.other" : "task.1", sequence: 2 },
+          params: {
+            task_id: "task.other",
+            sequence: 1,
+            phase: "conversion",
+            completed: 50,
+            total: 100,
+            unit: "percent",
+          },
         }),
       );
     }
@@ -478,8 +528,75 @@ describe("DocWen Machine Protocol client", () => {
   });
 
   it.each([
-    "nonmonotonic",
+    [
+      "valid/machine.task-failed",
+      "docwen_machine_remote:dependency.libreoffice_unavailable",
+      "LibreOffice is unavailable.",
+    ],
+    [
+      "invalid/machine.nonmonotonic-sequence",
+      "docwen_machine_protocol_error",
+      "notification sequence is not strictly monotonic",
+    ],
+    ["invalid/machine.invalid-progress", "docwen_machine_protocol_error", "invalid task progress"],
+    [
+      "invalid/machine.notification-before-acceptance",
+      "docwen_machine_protocol_error",
+      "unexpected JSON-RPC response for task/execute",
+    ],
+  ])("replays pinned %s through the task client", async (fixture, code, message) => {
+    const trace = JSON.parse(
+      readFileSync(`contracts/docwen/fixtures/${fixture}.trace.json`, "utf8"),
+    ) as JsonObject[];
+    spawnMock.mockImplementationOnce(() => new FakeChild(trace));
+    const invocation = await taskInvocation();
+    await expect(runDocWenMachineTask(invocation.options)).rejects.toMatchObject({ code, message });
+  });
+
+  it.each(["valid", "missing", "failed", "cancelled"] as const)(
+    "binds terminal diagnostic artifact IDs to the delivered bundle (%s)",
+    async (mode) => {
+      const trace = JSON.parse(
+        readFileSync(
+          "contracts/docwen/fixtures/invalid/machine.dangling-diagnostic-artifact.trace.json",
+          "utf8",
+        ),
+      );
+      const invocation = await taskInvocation();
+      const terminal = trace[2];
+      const params = terminal.params;
+      if (mode === "failed" || mode === "cancelled") {
+        terminal.method = `task/${mode}`;
+        delete params.bundle;
+        delete params.metrics;
+        if (mode === "failed")
+          params.error = { category: "internal", code: "failed", message: "Task failed.", retryable: false };
+        else params.reason = "Cancelled.";
+      } else {
+        // Upstream traces contain illustrative hashes. Bind it to the real staged byte.
+        const artifact = params.bundle.artifacts[0];
+        writeFileSync(path.join(invocation.staging, artifact.locator), "x");
+        artifact.sha256 = createHash("sha256").update("x").digest("hex");
+        if (mode === "valid") params.diagnostics[0].artifact_id = artifact.artifact_id;
+      }
+      spawnMock.mockImplementationOnce(() => new FakeChild(trace));
+      const operation = runDocWenMachineTask(invocation.options);
+      if (mode === "valid") {
+        await expect(operation).resolves.toMatchObject({ diagnostics: params.diagnostics });
+      } else {
+        await expect(operation).rejects.toMatchObject({
+          code: "docwen_machine_protocol_error",
+          message: "terminal diagnostic references an undelivered artifact",
+        });
+      }
+    },
+  );
+
+  it.each([
     "wrong_progress_task",
+    "progress_before_accept",
+    "unexpected_response",
+    "invalid_progress",
     "wrong_jsonrpc",
     "duplicate_terminal",
     "progress_after_terminal",

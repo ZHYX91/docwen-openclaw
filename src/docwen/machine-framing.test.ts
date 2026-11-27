@@ -33,6 +33,21 @@ describe("DocWen Machine Protocol framing", () => {
     expect(messages).toEqual([{ jsonrpc: "2.0", id: "中文", method: "capability/list", params: {} }]);
   });
 
+  it("decodes a fragmented large body and the next header across the same chunk", () => {
+    const value = { text: "中".repeat(400_000) };
+    const frame = encodeMachineFrame(value);
+    const tail = encodeMachineFrame({ final: true });
+    const decoder = new MachineFrameDecoder();
+    const messages = [];
+    for (let offset = 0; offset < frame.length - 128; offset += 8192) {
+      messages.push(...decoder.feed(frame.subarray(offset, Math.min(offset + 8192, frame.length - 128))));
+    }
+    expect(messages).toEqual([]);
+    expect(decoder.feed(Buffer.concat([frame.subarray(-128), tail.subarray(0, 5)]))).toEqual([value]);
+    expect(decoder.feed(tail.subarray(5))).toEqual([{ final: true }]);
+    decoder.finish();
+  });
+
   it("decodes adjacent frames without losing boundaries", () => {
     const decoder = new MachineFrameDecoder();
     const messages = decoder.feed(
