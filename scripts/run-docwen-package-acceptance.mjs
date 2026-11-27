@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
+import { createReadStream, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { isSupportedDocWenVersion } from "./fetch-docwen-release.mjs";
 import { loadCandidate } from "./release-candidate.mjs";
 import { verifyTarballBuffer, RELEASE_TARBALL_FILENAME } from "./release-package-lib.mjs";
@@ -61,6 +62,26 @@ export async function validateDocWenPackageCandidate(environment) {
   });
 }
 
+function provideRuntimeDependencies(entries, repositoryRoot, workRoot) {
+  const archived = JSON.parse(entries.get("package.json").toString("utf8"));
+  const lock = JSON.parse(readFileSync(join(repositoryRoot, "package-lock.json"), "utf8"));
+  const required = lock.packages[""].dependencies;
+  if (!isDeepStrictEqual(archived.dependencies ?? {}, required ?? {}))
+    throw new Error("plugin_acceptance_runtime_dependencies_mismatch");
+  // Use the exact dependencies already installed by npm ci, including their own
+  // transitive resolution. Governed work can live outside the checkout tree.
+  for (const name of Object.keys(required ?? {})) {
+    const node = "node_modules/" + name;
+    const installed = join(repositoryRoot, node);
+    const manifest = JSON.parse(readFileSync(join(installed, "package.json"), "utf8"));
+    if (manifest.name !== name || manifest.version !== lock.packages[node]?.version)
+      throw new Error("plugin_acceptance_runtime_dependency_not_installed");
+    const link = join(workRoot, node);
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(installed, link, process.platform === "win32" ? "junction" : "dir");
+  }
+}
+
 export async function runPackageAcceptance(environment = process.env) {
   const candidate = await validateDocWenPackageCandidate(environment);
   const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -81,6 +102,7 @@ export async function runPackageAcceptance(environment = process.env) {
   const work = createReleaseWork(repositoryRoot);
   let success = false;
   try {
+    provideRuntimeDependencies(entries, repositoryRoot, work.root);
     const pluginRoot = join(work.root, "plugin");
     for (const [relative, bytes] of entries) {
       const target = join(pluginRoot, ...relative.split("/"));

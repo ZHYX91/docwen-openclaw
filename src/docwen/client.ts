@@ -51,6 +51,32 @@ const TIFF_MEDIA_TYPE = "image/tiff";
 const JSON_MEDIA_TYPE = "application/json";
 const RESOLVED_DOCUMENT_MEDIA_TYPE = "application/vnd.docwen.resolved-document+json";
 const NUMBERING_EXPORT_PLAN_MEDIA_TYPE = "application/vnd.docwen.numbering-export-plan+json";
+const INPUT_MEDIA_TYPES: Readonly<Record<string, string>> = {
+  ".md": MARKDOWN_MEDIA_TYPE,
+  ".markdown": MARKDOWN_MEDIA_TYPE,
+  ".docx": DOCX_MEDIA_TYPE,
+  ".doc": DOC_MEDIA_TYPE,
+  ".wps": WPS_MEDIA_TYPE,
+  ".rtf": RTF_MEDIA_TYPE,
+  ".odt": ODT_MEDIA_TYPE,
+  ".xlsx": XLSX_MEDIA_TYPE,
+  ".pdf": PDF_MEDIA_TYPE,
+  ".html": "text/html",
+  ".htm": "text/html",
+  ".enex": "application/x-evernote",
+  ".ofd": "application/vnd.ofd",
+  ".xps": "application/vnd.ms-xpsdocument",
+  ".csv": CSV_MEDIA_TYPE,
+  ".png": PNG_MEDIA_TYPE,
+  ".tif": TIFF_MEDIA_TYPE,
+  ".tiff": TIFF_MEDIA_TYPE,
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".bmp": "image/bmp",
+  ".webp": "image/webp",
+};
+
 const MAX_REPORT_BYTES = 16 * 1024 * 1024;
 const MACHINE_INPUT_ROLES: readonly MachineInputRole[] = [
   "source",
@@ -1040,29 +1066,7 @@ function validateLogicalPath(value: string): string {
 }
 
 function mediaTypeForPath(file: string): string {
-  const mediaTypes: Record<string, string> = {
-    ".md": MARKDOWN_MEDIA_TYPE,
-    ".markdown": MARKDOWN_MEDIA_TYPE,
-    ".docx": DOCX_MEDIA_TYPE,
-    ".doc": DOC_MEDIA_TYPE,
-    ".wps": WPS_MEDIA_TYPE,
-    ".rtf": RTF_MEDIA_TYPE,
-    ".odt": ODT_MEDIA_TYPE,
-    ".xlsx": XLSX_MEDIA_TYPE,
-    ".pdf": PDF_MEDIA_TYPE,
-    ".ofd": "application/vnd.ofd",
-    ".xps": "application/vnd.ms-xpsdocument",
-    ".csv": CSV_MEDIA_TYPE,
-    ".png": PNG_MEDIA_TYPE,
-    ".tif": TIFF_MEDIA_TYPE,
-    ".tiff": TIFF_MEDIA_TYPE,
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".bmp": "image/bmp",
-    ".webp": "image/webp",
-  };
-  const mediaType = mediaTypes[path.extname(file).toLowerCase()];
+  const mediaType = INPUT_MEDIA_TYPES[path.extname(file).toLowerCase()];
   if (!mediaType)
     throw new DocWenMachineError("docwen_media_type_unknown", `Unsupported input extension: ${file}`);
   return mediaType;
@@ -1304,6 +1308,7 @@ function jsonValue(value: unknown): JsonObject | string | number | boolean | nul
 }
 
 export const clientTesting = {
+  inputMediaTypes: INPUT_MEDIA_TYPES,
   buildConversionOptions,
   buildInputHandles,
   capabilityAcceptsInputs,

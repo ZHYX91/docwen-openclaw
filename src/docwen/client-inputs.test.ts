@@ -40,6 +40,9 @@ const formats = [
   ["wps", "document", "application/vnd.ms-works"],
   ["rtf", "document", "application/rtf"],
   ["odt", "document", "application/vnd.oasis.opendocument.text"],
+  ["html", "resource", "text/html"],
+  ["htm", "resource", "text/html"],
+  ["enex", "resource", "application/x-evernote"],
   ["ofd", "resource", "application/vnd.ofd"],
   ["xps", "resource", "application/vnd.ms-xpsdocument"],
 ] as const;
