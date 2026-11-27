@@ -5,7 +5,7 @@ import { lstat, open, realpath, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import * as path from "node:path";
-import { linuxOwnerErrorDetails } from "../process/linux-owner.js";
+import { linuxOwnerErrorDetails, LinuxOwnerUnsupportedError } from "../process/linux-owner.js";
 
 import {
   ProcessTreeTerminationError,
@@ -212,6 +212,8 @@ class MachineSession {
       this.child = owned.child;
       this.processTree = owned.ownership;
     } catch (error) {
+      if (error instanceof LinuxOwnerUnsupportedError)
+        throw new DocWenMachineError("docwen_machine_host_unsupported", error.message);
       throw localError("docwen_machine_spawn_failed", "Unable to start DocWen Machine Protocol.", error);
     }
     this.closed = new Promise((resolve) => {

@@ -1,4 +1,4 @@
-import { unlinkSync, rmdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, unlinkSync, rmdirSync } from "node:fs";
 import type * as FileSystem from "node:fs";
 import { rm } from "node:fs/promises";
 import { dirname, basename, join } from "node:path";
@@ -11,7 +11,13 @@ import { runDocWenMachineQuery } from "../docwen/machine-client.js";
 
 vi.mock("node:fs", async (original) => {
   const fs = await original<typeof FileSystem>();
-  return { ...fs, unlinkSync: vi.fn(fs.unlinkSync), rmdirSync: vi.fn(fs.rmdirSync) };
+  return {
+    ...fs,
+    readFileSync: vi.fn(fs.readFileSync),
+    mkdtempSync: vi.fn(fs.mkdtempSync),
+    unlinkSync: vi.fn(fs.unlinkSync),
+    rmdirSync: vi.fn(fs.rmdirSync),
+  };
 });
 const roots = new Set<string>();
 afterEach(async () => {
@@ -39,6 +45,26 @@ async function inject(phase: "image_unlink" | "directory_remove"): Promise<void>
 }
 
 describe.skipIf(process.platform !== "linux")("native image cleanup failures", () => {
+  it.each(["ENOENT", "EACCES"])("refuses a host without readable procfs child lists (%s)", async (code) => {
+    vi.mocked(mkdtempSync).mockClear();
+    vi.mocked(readFileSync).mockImplementationOnce(() => {
+      throw Object.assign(new Error("unreadable"), { code });
+    });
+    await expect(
+      runDocWenMachineQuery({
+        binaryPath: process.execPath,
+        method: "health/check",
+        params: {},
+        timeoutMs: 500,
+      }),
+    ).rejects.toMatchObject({
+      code: "docwen_machine_host_unsupported",
+      message: expect.stringContaining("procfs child lists"),
+    });
+    expect(readFileSync).toHaveBeenCalledWith(`/proc/self/task/${process.pid}/children`);
+    expect(mkdtempSync).not.toHaveBeenCalled();
+  });
+
   it.each(["image_unlink", "directory_remove"] as const)(
     "records %s before delivering a pre-READY control failure",
     async (phase) => {
