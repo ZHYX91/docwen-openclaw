@@ -320,6 +320,12 @@ async function resources(
   return { kind: result.kind, resource };
 }
 
+function isTemplateIdForTarget(value: unknown, target: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^template\.(docx|xlsx)\.[0-9a-f]{64}$/u.exec(value);
+  return match !== null && match[1] === target;
+}
+
 function validateTemplateResources(items: JsonObject[], target?: string): void {
   const ids = new Set<string>();
   const defaults = new Set<string>();
@@ -330,10 +336,8 @@ function validateTemplateResources(items: JsonObject[], target?: string): void {
       Object.keys(item).some(
         (key) => !["id", "name", "description", "target", "origin", "is_default"].includes(key),
       ) ||
-      typeof id !== "string" ||
-      !/^template\.(?:docx|xlsx)\.[0-9a-f]{64}$/u.test(id) ||
       (itemTarget !== "docx" && itemTarget !== "xlsx") ||
-      !id.startsWith(`template.${itemTarget}.`) ||
+      !isTemplateIdForTarget(id, itemTarget) ||
       (target !== undefined && itemTarget !== target) ||
       typeof item.name !== "string" ||
       typeof item.description !== "string" ||
@@ -594,6 +598,12 @@ function optionAllowsValue(schema: JsonObject, value: string | boolean): boolean
   if (type !== undefined && (Array.isArray(type) ? !type.includes(typeof value) : type !== typeof value)) {
     return false;
   }
+  if (
+    schema["x-docwen-resource-kind"] === "templates" &&
+    schema["x-docwen-resource-target"] !== undefined &&
+    !isTemplateIdForTarget(value, schema["x-docwen-resource-target"])
+  )
+    return false;
   if (Object.hasOwn(schema, "const") && schema.const !== value) return false;
   const allowed = schema.enum;
   return allowed === undefined || (Array.isArray(allowed) && allowed.includes(value));
