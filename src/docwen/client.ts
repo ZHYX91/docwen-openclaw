@@ -1,11 +1,18 @@
-import { lstat, mkdir, mkdtemp, readFile, realpath } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { lstat, mkdir, mkdtemp, realpath } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { buffer } from "node:stream/consumers";
+
+import { Check, type XSchema } from "typebox/schema";
 
 import type { DocWenPluginConfig } from "../config.js";
 import { WRITE_TOOL_NAMES } from "../tools/catalog.js";
 import {
   DocWenMachineError,
+  isContainedPath,
   type JsonObject,
   type MachineCapability,
   type MachineInputHandle,
@@ -17,6 +24,7 @@ import {
   runDocWenMachineTask,
   type ValidatedArtifactBundle,
 } from "./machine-client.js";
+import { isJsonObject } from "./machine-framing.js";
 import { resolveDocWenBinary } from "./path.js";
 import { diagnosticSummary } from "./diagnostics.js";
 import { preflightPublication } from "./output-preflight.js";
@@ -50,6 +58,32 @@ const TIFF_MEDIA_TYPE = "image/tiff";
 const JSON_MEDIA_TYPE = "application/json";
 const RESOLVED_DOCUMENT_MEDIA_TYPE = "application/vnd.docwen.resolved-document+json";
 const NUMBERING_EXPORT_PLAN_MEDIA_TYPE = "application/vnd.docwen.numbering-export-plan+json";
+const INPUT_MEDIA_TYPES: Readonly<Record<string, string>> = {
+  ".md": MARKDOWN_MEDIA_TYPE,
+  ".markdown": MARKDOWN_MEDIA_TYPE,
+  ".docx": DOCX_MEDIA_TYPE,
+  ".doc": DOC_MEDIA_TYPE,
+  ".wps": WPS_MEDIA_TYPE,
+  ".rtf": RTF_MEDIA_TYPE,
+  ".odt": ODT_MEDIA_TYPE,
+  ".xlsx": XLSX_MEDIA_TYPE,
+  ".pdf": PDF_MEDIA_TYPE,
+  ".html": "text/html",
+  ".htm": "text/html",
+  ".enex": "application/x-evernote",
+  ".ofd": "application/vnd.ofd",
+  ".xps": "application/vnd.ms-xpsdocument",
+  ".csv": CSV_MEDIA_TYPE,
+  ".png": PNG_MEDIA_TYPE,
+  ".tif": TIFF_MEDIA_TYPE,
+  ".tiff": TIFF_MEDIA_TYPE,
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".bmp": "image/bmp",
+  ".webp": "image/webp",
+};
+
 const MAX_REPORT_BYTES = 16 * 1024 * 1024;
 const MACHINE_INPUT_ROLES: readonly MachineInputRole[] = [
   "source",
@@ -70,6 +104,7 @@ type InputSpec = {
 };
 
 type TaskExecution = {
+  inputs: MachineInputHandle[];
   completed: MachineTaskCompleted;
   temporaryRoot: string;
 };
@@ -285,6 +320,12 @@ async function resources(
   return { kind: result.kind, resource };
 }
 
+function isTemplateIdForTarget(value: unknown, target: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^template\.(docx|xlsx)\.[0-9a-f]{64}$/u.exec(value);
+  return match !== null && match[1] === target;
+}
+
 function validateTemplateResources(items: JsonObject[], target?: string): void {
   const ids = new Set<string>();
   const defaults = new Set<string>();
@@ -295,10 +336,8 @@ function validateTemplateResources(items: JsonObject[], target?: string): void {
       Object.keys(item).some(
         (key) => !["id", "name", "description", "target", "origin", "is_default"].includes(key),
       ) ||
-      typeof id !== "string" ||
-      !/^template\.(?:docx|xlsx)\.[0-9a-f]{64}$/u.test(id) ||
       (itemTarget !== "docx" && itemTarget !== "xlsx") ||
-      !id.startsWith(`template.${itemTarget}.`) ||
+      !isTemplateIdForTarget(id, itemTarget) ||
       (target !== undefined && itemTarget !== target) ||
       typeof item.name !== "string" ||
       typeof item.description !== "string" ||
@@ -316,6 +355,10 @@ function validateTemplateResources(items: JsonObject[], target?: string): void {
     if (item.is_default) defaults.add(itemTarget);
   }
 }
+
+const PROOFREAD_REPORT_SCHEMA = createRequire(import.meta.url)(
+  "../../contracts/docwen/schemas/docwen.proofread_report.v2.schema.json",
+) as XSchema;
 
 async function validateMarkdown(
   binaryPath: string,
@@ -347,28 +390,64 @@ async function validateMarkdown(
   const cleanup = newPublication();
   try {
     const preferred = preferredArtifact(execution.completed.bundle);
-    if (preferred.media_type !== JSON_MEDIA_TYPE || preferred.size_bytes > MAX_REPORT_BYTES) {
+    if (preferred?.media_type !== JSON_MEDIA_TYPE || preferred.size_bytes > MAX_REPORT_BYTES) {
       throw new DocWenMachineError(
         "docwen_validation_report_invalid",
         "DocWen returned an invalid validation report.",
       );
     }
-    let report: unknown;
+    // Read one extra byte so that a changed file cannot exceed the validated
+    // report size or grow unbounded while the bytes are being consumed.
+    signal?.throwIfAborted();
+    let bytes: Buffer;
     try {
-      report = JSON.parse(await readFile(preferred.absolutePath, "utf8"));
+      bytes = await buffer(createReadStream(preferred.absolutePath, { end: preferred.size_bytes, signal }));
     } catch (error) {
+      signal?.throwIfAborted();
       throw new DocWenMachineError(
         "docwen_validation_report_invalid",
-        "DocWen validation report is not valid JSON.",
+        "DocWen validation report could not be read.",
         {
           cause: error instanceof Error ? error.message : String(error),
         },
       );
     }
+    signal?.throwIfAborted();
+    if (
+      bytes.length !== preferred.size_bytes ||
+      createHash("sha256").update(bytes).digest("hex") !== preferred.sha256
+    ) {
+      throw new DocWenMachineError(
+        "docwen_machine_integrity_error",
+        "The validation report changed after verification.",
+      );
+    }
+    let report: unknown;
+    try {
+      report = JSON.parse(bytes.toString("utf8"));
+    } catch (error) {
+      throw new DocWenMachineError(
+        "docwen_validation_report_invalid",
+        "DocWen validation report is not valid JSON.",
+        { cause: error instanceof Error ? error.message : String(error) },
+      );
+    }
+    if (!isJsonObject(report) || !isJsonObject(report.source) || !Check(PROOFREAD_REPORT_SCHEMA, report)) {
+      throw new DocWenMachineError(
+        "docwen_validation_report_invalid",
+        "DocWen returned an invalid v2 proofreading report.",
+      );
+    }
+    if (report.source.content_sha256 !== execution.inputs[0]!.sha256) {
+      throw new DocWenMachineError(
+        "docwen_machine_integrity_error",
+        "The proofreading report describes a different Markdown input.",
+      );
+    }
     await cleanupPublicationPath(execution.temporaryRoot, cleanup, "staging_cleanup_failed");
     return {
       capability_id: "validate.markdown",
-      report: jsonValue(report),
+      report,
       diagnostics: execution.completed.diagnostics,
       metrics: execution.completed.metrics,
       diagnostic_summary: diagnosticSummary({
@@ -519,6 +598,12 @@ function optionAllowsValue(schema: JsonObject, value: string | boolean): boolean
   if (type !== undefined && (Array.isArray(type) ? !type.includes(typeof value) : type !== typeof value)) {
     return false;
   }
+  if (
+    schema["x-docwen-resource-kind"] === "templates" &&
+    schema["x-docwen-resource-target"] !== undefined &&
+    !isTemplateIdForTarget(value, schema["x-docwen-resource-target"])
+  )
+    return false;
   if (Object.hasOwn(schema, "const") && schema.const !== value) return false;
   const allowed = schema.enum;
   return allowed === undefined || (Array.isArray(allowed) && allowed.includes(value));
@@ -572,10 +657,11 @@ async function numberMarkdown(
     );
   }
   const preparedInputs = await buildInputHandles([input], signal);
+  const source = preparedInputs[0]!;
   await preflightPublication(file, "file", signal);
   const sourceVersion = {
-    sizeBytes: preparedInputs[0]!.size_bytes,
-    sha256: preparedInputs[0]!.sha256,
+    sizeBytes: source.size_bytes,
+    sha256: source.sha256,
   };
   const execution = await executeTask(
     binaryPath,
@@ -588,14 +674,17 @@ async function numberMarkdown(
   );
   try {
     const preferred = preferredArtifact(execution.completed.bundle);
-    if (preferred.kind !== "document" || preferred.media_type !== MARKDOWN_MEDIA_TYPE) {
+    if (preferred?.kind !== "document" || preferred.media_type !== MARKDOWN_MEDIA_TYPE) {
       throw new DocWenMachineError(
         "docwen_bundle_shape_invalid",
         "Numbering did not return one preferred Markdown document.",
       );
     }
+    if ((await realpath(file)) !== source.locator.path) {
+      throw new DocWenMachineError("docwen_source_changed", "The input path now points to a different file.");
+    }
     const committed = await atomicReplaceFile(
-      file,
+      source.locator.path,
       preferred.absolutePath,
       {
         sizeBytes: preferred.size_bytes,
@@ -628,11 +717,15 @@ async function persistentTask(
   params: Params,
   config: DocWenPluginConfig,
   signal?: AbortSignal,
-  preparedInputs?: MachineInputHandle[],
 ): Promise<JsonObject> {
   const outputDir = requiredAbsolutePath(params, "outputDir");
   const overwrite = optionalBoolean(params, "overwrite") ?? false;
   const initialDestination = await preflightOutputDirectory(outputDir, overwrite, signal);
+  const preparedInputs = await buildInputHandles(
+    inputs,
+    signal,
+    initialDestination ? { requested: outputDir, canonical: initialDestination.canonicalPath } : undefined,
+  );
   const execution = await executeTask(binaryPath, selection, inputs, options, config, signal, preparedInputs);
   try {
     const committed = await atomicCommitBundle(
@@ -717,7 +810,7 @@ async function executeTask(
         };
       },
     });
-    return { completed, temporaryRoot };
+    return { completed, temporaryRoot, inputs };
   } catch (error) {
     const publication = newPublication();
     await cleanupPublicationPath(temporaryRoot, publication, "staging_cleanup_failed");
@@ -908,6 +1001,7 @@ function capabilityAcceptsInputs(
 async function buildInputHandles(
   inputSpecs: readonly InputSpec[],
   signal?: AbortSignal,
+  replacedDirectory?: { requested: string; canonical: string },
 ): Promise<MachineInputHandle[]> {
   signal?.throwIfAborted();
   if (inputSpecs.length === 0)
@@ -931,6 +1025,16 @@ async function buildInputHandles(
       throw new DocWenMachineError("docwen_input_not_regular_file", `Input is not a regular file: ${file}`);
     }
     const canonicalPath = await realpath(file);
+    if (
+      replacedDirectory &&
+      (isContainedPath(replacedDirectory.requested, file) ||
+        isContainedPath(replacedDirectory.canonical, canonicalPath))
+    ) {
+      throw new DocWenMachineError(
+        "docwen_output_contains_input",
+        "The output folder contains an input file. Choose a separate folder to preserve the original.",
+      );
+    }
     const key = process.platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
     if (canonicalPaths.has(key))
       throw new DocWenMachineError("docwen_duplicate_input", `Duplicate input: ${file}`);
@@ -1020,29 +1124,7 @@ function validateLogicalPath(value: string): string {
 }
 
 function mediaTypeForPath(file: string): string {
-  const mediaTypes: Record<string, string> = {
-    ".md": MARKDOWN_MEDIA_TYPE,
-    ".markdown": MARKDOWN_MEDIA_TYPE,
-    ".docx": DOCX_MEDIA_TYPE,
-    ".doc": DOC_MEDIA_TYPE,
-    ".wps": WPS_MEDIA_TYPE,
-    ".rtf": RTF_MEDIA_TYPE,
-    ".odt": ODT_MEDIA_TYPE,
-    ".xlsx": XLSX_MEDIA_TYPE,
-    ".pdf": PDF_MEDIA_TYPE,
-    ".ofd": "application/vnd.ofd",
-    ".xps": "application/vnd.ms-xpsdocument",
-    ".csv": CSV_MEDIA_TYPE,
-    ".png": PNG_MEDIA_TYPE,
-    ".tif": TIFF_MEDIA_TYPE,
-    ".tiff": TIFF_MEDIA_TYPE,
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".bmp": "image/bmp",
-    ".webp": "image/webp",
-  };
-  const mediaType = mediaTypes[path.extname(file).toLowerCase()];
+  const mediaType = INPUT_MEDIA_TYPES[path.extname(file).toLowerCase()];
   if (!mediaType)
     throw new DocWenMachineError("docwen_media_type_unknown", `Unsupported input extension: ${file}`);
   return mediaType;
@@ -1129,7 +1211,7 @@ function taskResult(
   completed: MachineTaskCompleted,
   outputRoot: string,
   artifactPaths: string[],
-  preferredArtifactPath: string,
+  preferredArtifactPath: string | null,
   inPlace: boolean,
   publication: Publication,
 ): JsonObject {
@@ -1275,15 +1357,8 @@ function stringArray(value: unknown, field: string): string[] {
   return [...value];
 }
 
-function jsonValue(value: unknown): JsonObject | string | number | boolean | null | unknown[] {
-  if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
-    return value as string | number | boolean | null;
-  }
-  if (Array.isArray(value)) return value.map(jsonValue);
-  return requiredObject(value, "JSON value");
-}
-
 export const clientTesting = {
+  inputMediaTypes: INPUT_MEDIA_TYPES,
   buildConversionOptions,
   buildInputHandles,
   capabilityAcceptsInputs,

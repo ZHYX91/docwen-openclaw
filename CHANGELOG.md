@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.1.5 - 2026-11-28
+
+- Protect source documents and linked resources during output replacement and in-place numbering. Preserve restrictive permissions on Linux output folders.
+- Verify Machine message order and proofreading report bytes. Save all independent outputs in a valid bundle without requiring a preferred file.
+- Discover HTML and Evernote inputs supported by DocWen and validate the selected document template target.
+
 ## 3.1.4 - 2026-11-20
 
 - Update Hono and its Node.js adapter in the development SDK. The plugin keeps the same runtime dependencies and Gateway compatibility.

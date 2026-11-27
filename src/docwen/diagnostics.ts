@@ -27,7 +27,9 @@ register("unsupported", "check_capabilities", [
   "docwen_media_type_unknown",
   "docwen_resource_not_found",
 ]);
+register("unsupported", "choose_supported_host", ["docwen_machine_host_unsupported"]);
 register("unsupported", "choose_supported_filesystem", ["docwen_output_filesystem_unsupported"]);
+register("unsupported", "choose_new_output_directory", ["docwen_output_permissions_unsupported"]);
 register("output_failed", "check_output_directory", ["docwen_output_preflight_failed"]);
 register("unavailable", "check_dependencies", ["docwen_capability_unavailable"]);
 register("configuration", "check_binary_configuration", [
@@ -63,6 +65,7 @@ register("conflict", "wait_for_active_writer", ["docwen_output_busy"]);
 register("invalid_request", "choose_new_output_directory", [
   "docwen_output_not_directory",
   "docwen_output_too_broad",
+  "docwen_output_contains_input",
 ]);
 register("output_failed", "review_failure", [
   "docwen_output_failed",

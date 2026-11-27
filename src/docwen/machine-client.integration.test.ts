@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { resolveDocWenBinary } from "./path.js";
+import type * as PackagedTools from "./client.js";
 import type * as PackagedMachineClient from "./machine-client.js";
 import { NEUTRAL_DOCUMENT, NUMBERING_PLAN } from "./test-fixtures.js";
 
@@ -49,6 +50,31 @@ const planInput = {
 };
 
 describe.skipIf(!candidate)("DocWen Machine Protocol v2 packaged exact-two client", () => {
+  it("can construct source handles for the Core conversion formats it offers", async () => {
+    const tools: typeof PackagedTools = await import(
+      pathToFileURL(join(pluginRoot!, "dist/docwen/client.js")).href
+    );
+    const { result } = await packagedClient!.runDocWenMachineQuery({
+      binaryPath: await resolveDocWenBinary(candidate!),
+      method: "capability/list",
+      params: {},
+      timeoutMs: 60_000,
+    });
+    const supported = new Set(Object.values(tools.clientTesting.inputMediaTypes));
+    const capabilities = result.capabilities as PackagedMachineClient.JsonObject[];
+    expect(capabilities.length).toBeGreaterThan(0);
+    for (const raw of capabilities) {
+      const capability = tools.clientTesting.parseCapability(raw);
+      if (!["convert", "render", "transform"].includes(capability.operation)) continue;
+      for (const slot of capability.input_shape.slots) {
+        if (slot.role !== "source" && slot.role !== "linked_resource") continue;
+        for (const mediaType of slot.media_types) {
+          expect(supported.has(mediaType), `${capability.capability_id}: ${mediaType}`).toBe(true);
+        }
+      }
+    }
+  }, 65_000);
+
   it("round-trips a resolved document and DOCX through the packaged machine protocol", async () => {
     const binaryPath = await resolveDocWenBinary(candidate!);
     const root = await mkdtemp(join(tmpdir(), "docwen-machine-client-"));

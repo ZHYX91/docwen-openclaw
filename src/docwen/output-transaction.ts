@@ -1,5 +1,5 @@
 import { constants as fsConstants } from "node:fs";
-import { chmod, copyFile, lstat, mkdir, mkdtemp, rename } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, realpath, rename } from "node:fs/promises";
 import * as path from "node:path";
 
 import { DocWenMachineError, type ValidatedArtifactBundle } from "./machine-client.js";
@@ -33,14 +33,14 @@ type CommitHooks = Readonly<{
   signal?: AbortSignal;
 }>;
 
-type BundlePaths = { artifactPaths: string[]; preferredArtifactPath: string };
+type BundlePaths = { artifactPaths: string[]; preferredArtifactPath: string | null };
 export type Published<T> = { value: T; publication: Publication };
 
 export async function preflightOutputDirectory(
   destination: string,
   overwrite: boolean,
   signal?: AbortSignal,
-): Promise<DirectorySnapshot | null> {
+): Promise<(DirectorySnapshot & { canonicalPath: string }) | null> {
   assertSafeDestination(destination);
   assertDirectoryPublicationSupported();
   let existing;
@@ -58,7 +58,10 @@ export async function preflightOutputDirectory(
       "Bundle output directory already exists; set overwrite=true explicitly.",
     );
   }
-  const snapshot = existing ? await captureDirectorySnapshot(destination, signal) : null;
+  const canonicalPath = existing ? await realpath(destination) : null;
+  const snapshot = canonicalPath
+    ? { ...(await captureDirectorySnapshot(canonicalPath, signal)), canonicalPath }
+    : null;
   await preflightPublication(destination, "directory", signal);
   return snapshot;
 }
@@ -79,10 +82,11 @@ export async function atomicCommitBundle(
         : initialDestination;
     const preferred = preferredArtifact(bundle);
     const paths = bundle.artifacts.map(artifactCommitPath);
-    const preferredPath = artifactCommitPath(preferred);
     const value = {
       artifactPaths: paths.map((relative) => path.join(destination, ...relative.split("/"))),
-      preferredArtifactPath: path.join(destination, ...preferredPath.split("/")),
+      preferredArtifactPath: preferred
+        ? path.join(destination, ...artifactCommitPath(preferred).split("/"))
+        : null,
     };
     await commitTransaction(
       destination,
@@ -99,6 +103,25 @@ export async function atomicCommitBundle(
           await mkdir(path.dirname(target), { recursive: true });
           await copyFile(artifact.absolutePath, target, fsConstants.COPYFILE_EXCL);
           await assertCopiedArtifact(target, artifact.size_bytes, artifact.sha256, hooks.signal);
+        }
+        if (expected && process.platform === "linux") {
+          const fresh = await lstat(candidate, { bigint: true });
+          const previous = expected.root;
+          if (fresh.uid !== previous.uid || fresh.gid !== previous.gid) {
+            throw new DocWenMachineError(
+              "docwen_output_permissions_unsupported",
+              "The replacement folder would have a different owner or group. Choose a new output folder.",
+            );
+          }
+          // Preserve restrictions from both directories, including the old sticky/setgid policy.
+          const mode = (previous.mode & fresh.mode & 0o777n) | (previous.mode & 0o7000n);
+          await chmod(candidate, Number(mode));
+          if (((await lstat(candidate, { bigint: true })).mode & 0o7777n) !== mode) {
+            throw new DocWenMachineError(
+              "docwen_output_permissions_unsupported",
+              "The filesystem could not apply the output folder permissions. Choose a new output folder.",
+            );
+          }
         }
       },
       expected ? (current) => assertDirectorySnapshotUnchanged(current, expected, hooks.signal) : undefined,
@@ -341,6 +364,7 @@ export function artifactCommitPath(artifact: ValidatedArtifactBundle["artifacts"
 
 export function preferredArtifact(bundle: ValidatedArtifactBundle) {
   const entry = bundle.entries.find((item) => item.preferred === true);
+  if (!entry && bundle.entries.length > 0) return undefined;
   const artifact = bundle.artifacts.find((item) => item.artifact_id === entry?.artifact_id);
   if (!artifact)
     throw new DocWenMachineError("docwen_bundle_shape_invalid", "Bundle preferred entry is invalid.");

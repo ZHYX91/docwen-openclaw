@@ -26,8 +26,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends musl-tools
+          apt_sources=(-o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-)
+          sudo apt-get "${apt_sources[@]}" update
+          sudo apt-get "${apt_sources[@]}" install --yes --no-install-recommends musl-tools
           mkdir "$RUNNER_TEMP/owner-a" "$RUNNER_TEMP/owner-b"
           node scripts/build-native-linux-owner.mjs "$RUNNER_TEMP/owner-a"
           node scripts/build-native-linux-owner.mjs "$RUNNER_TEMP/owner-b"

@@ -22,6 +22,8 @@ export type LinuxOwner = Readonly<{
   diagnostics?: Record<string, string>;
 }>;
 
+export class LinuxOwnerUnsupportedError extends Error {}
+
 const imageFailures = new WeakMap<Error, Record<string, string>>();
 export function linuxOwnerErrorDetails(error: unknown): Record<string, string> | undefined {
   return error instanceof Error ? imageFailures.get(error) : undefined;
@@ -36,6 +38,16 @@ export function spawnLinuxOwnedMachine(
   options: { cwd: string; env: NodeJS.ProcessEnv; shell: false; windowsHide: true },
 ): { child: ChildProcessWithoutNullStreams; ownership: LinuxOwner } {
   if (process.arch !== "x64") throw new Error("The Linux Machine process owner requires x64.");
+  // The native subreapers use this kernel interface to enumerate their own
+  // children during teardown. Check it before any Machine process can start.
+  try {
+    readFileSync(`/proc/self/task/${process.pid}/children`);
+  } catch (cause) {
+    throw new LinuxOwnerUnsupportedError(
+      "The Gateway host must provide readable Linux procfs child lists to safely stop DocWen processes.",
+      { cause },
+    );
+  }
   const payload = readFileSync(new URL("../../native/linux-owner-x64", import.meta.url));
   if (
     payload.length > 128 * 1024 ||

@@ -5,7 +5,7 @@ import { lstat, open, realpath, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import * as path from "node:path";
-import { linuxOwnerErrorDetails } from "../process/linux-owner.js";
+import { linuxOwnerErrorDetails, LinuxOwnerUnsupportedError } from "../process/linux-owner.js";
 
 import {
   ProcessTreeTerminationError,
@@ -190,7 +190,7 @@ class MessageQueue {
 class MachineSession {
   private readonly queue = new MessageQueue();
   private readonly decoder = new MachineFrameDecoder();
-  private readonly deferred: JsonObject[] = [];
+  private cancellationId?: number;
   private readonly stderr: Buffer[] = [];
   private stderrBytes = 0;
   private nextRequestId = 0;
@@ -212,6 +212,8 @@ class MachineSession {
       this.child = owned.child;
       this.processTree = owned.ownership;
     } catch (error) {
+      if (error instanceof LinuxOwnerUnsupportedError)
+        throw new DocWenMachineError("docwen_machine_host_unsupported", error.message);
       throw localError("docwen_machine_spawn_failed", "Unable to start DocWen Machine Protocol.", error);
     }
     this.closed = new Promise((resolve) => {
@@ -235,7 +237,7 @@ class MachineSession {
     });
     this.child.stdout.on("data", (chunk: Buffer) => {
       try {
-        for (const message of this.decoder.feed(Buffer.from(chunk))) this.queue.push(message);
+        for (const message of this.decoder.feed(chunk)) this.queue.push(message);
       } catch (error) {
         this.fail(protocolError(error));
       }
@@ -314,42 +316,53 @@ class MachineSession {
   async rpc(method: string, params: JsonObject): Promise<JsonObject> {
     const id = ++this.nextRequestId;
     this.send({ jsonrpc: "2.0", id, method, params });
+    // Requests are sequential up to task acceptance. A notification or a response
+    // for another request here cannot belong to a later phase of this session.
+    const message = await this.queue.next();
+    if (message.id !== id || message.jsonrpc !== "2.0")
+      throw protocolError(`unexpected JSON-RPC response for ${method}`);
+    if (isJsonObject(message.error)) {
+      if (method === "initialize" && message.error.code === -32602) {
+        throw new DocWenMachineError(
+          "docwen_machine_incompatible_version",
+          "DocWen Machine Protocol 2.0 is required. Update DocWen and its client together.",
+        );
+      }
+      throw remoteRpcError(message.error);
+    }
+    return requiredObject(message.result, `${method}.result`);
+  }
+
+  async nextNotification(taskId: string): Promise<JsonObject> {
     while (true) {
       const message = await this.queue.next();
-      if (message.id !== id) {
-        this.deferred.push(message);
-        continue;
-      }
-      if (message.jsonrpc !== "2.0") throw protocolError(`invalid JSON-RPC response for ${method}`);
-      if (isJsonObject(message.error)) {
-        if (method === "initialize" && message.error.code === -32602) {
-          throw new DocWenMachineError(
-            "docwen_machine_incompatible_version",
-            "DocWen Machine Protocol 2.0 is required. Update DocWen and its client together.",
-          );
-        }
-        throw remoteRpcError(message.error);
-      }
-      return requiredObject(message.result, `${method}.result`);
+      if (message.id === undefined) return message;
+      if (message.jsonrpc !== "2.0" || message.id !== this.cancellationId)
+        throw protocolError("unexpected response during task execution");
+
+      const ack = requiredObject(message.result, "task/cancel.result");
+      if (
+        ack.task_id !== taskId ||
+        (ack.state !== "cancellation_requested" &&
+          ack.state !== "already_terminal" &&
+          ack.state !== "not_found")
+      )
+        throw protocolError("invalid cancellation acknowledgement");
+      this.cancellationId = undefined;
     }
   }
 
-  nextMessage(): Promise<JsonObject> {
-    const message = this.deferred.shift();
-    return message ? Promise.resolve(message) : this.queue.next();
-  }
-
   requestCancellation(taskId: string): void {
+    this.cancellationId = ++this.nextRequestId;
     this.send({
       jsonrpc: "2.0",
-      id: ++this.nextRequestId,
+      id: this.cancellationId,
       method: "task/cancel",
       params: { task_id: taskId },
     });
   }
 
   fail(error: Error): void {
-    this.deferred.length = 0;
     this.queue.fail(error);
   }
 
@@ -361,7 +374,7 @@ class MachineSession {
     // have exited. Complete the captured ownership exactly once on both paths.
     await this.terminate();
     const code = graceful.settled ? graceful.value : await this.closed;
-    if (this.queue.drain().length > 0 || this.deferred.length > 0) {
+    if (this.queue.drain().length > 0) {
       throw protocolError("unexpected messages after the operation completed");
     }
     const stderrText = Buffer.concat(this.stderr).toString("utf8");
@@ -471,8 +484,7 @@ export async function runDocWenMachineTask(options: {
     const progress: JsonObject[] = [];
     let lastSequence = 0;
     while (true) {
-      const message = await session.nextMessage();
-      if (message.id !== undefined) continue;
+      const message = await session.nextNotification(taskId);
       if (message.jsonrpc !== "2.0") throw protocolError("invalid JSON-RPC task notification");
       const params = requiredObject(message.params, "notification.params");
       if (params.task_id !== taskId) throw protocolError("notification task id does not match acceptance");
@@ -480,32 +492,66 @@ export async function runDocWenMachineTask(options: {
       if (sequence <= lastSequence) throw protocolError("notification sequence is not strictly monotonic");
       lastSequence = sequence;
       if (message.method === "task/progress") {
+        const { phase, completed, total, unit, message: label } = params;
+        if (
+          phase !== "conversion" ||
+          typeof completed !== "number" ||
+          !Number.isInteger(completed) ||
+          completed < 0 ||
+          completed > 100 ||
+          total !== 100 ||
+          unit !== "percent" ||
+          (label !== undefined && (typeof label !== "string" || !/^[\s\S]{1,31}$/u.test(label))) ||
+          Object.keys(params).some(
+            (key) => !["task_id", "sequence", "phase", "completed", "total", "unit", "message"].includes(key),
+          )
+        )
+          throw protocolError("invalid task progress");
         progress.push(params);
         continue;
       }
-      if (message.method === "task/failed") throw remoteTaskError(params);
+      if (message.method === "task/failed") {
+        terminalDiagnostics(params);
+        throw remoteTaskError(params);
+      }
       if (message.method === "task/cancelled") {
+        terminalDiagnostics(params);
         throw new DocWenMachineError("docwen_machine_cancelled", "DocWen task was cancelled.");
       }
       if (message.method !== "task/completed") throw protocolError("unexpected Machine notification");
       if (options.signal?.aborted) {
         throw new DocWenMachineError("docwen_machine_cancelled", "DocWen task was cancelled.");
       }
+      const bundle = await validateArtifactBundle(
+        params.bundle,
+        request.output.staging_root.path,
+        taskId,
+        options.signal,
+      );
       return {
         taskId,
         plan,
-        bundle: await validateArtifactBundle(
-          params.bundle,
-          request.output.staging_root.path,
-          taskId,
-          options.signal,
-        ),
-        diagnostics: objectArray(params.diagnostics, "terminal.diagnostics"),
+        bundle,
+        diagnostics: terminalDiagnostics(params, bundle),
         metrics: requiredObject(params.metrics, "terminal.metrics"),
         progress,
       };
     }
   });
+}
+
+function terminalDiagnostics(params: JsonObject, bundle?: ValidatedArtifactBundle): JsonObject[] {
+  const diagnostics = objectArray(params.diagnostics, "terminal.diagnostics");
+  const artifactIds = new Set(bundle?.artifacts.map((item) => item.artifact_id));
+  for (const item of diagnostics) {
+    if (
+      item.artifact_id !== undefined &&
+      (typeof item.artifact_id !== "string" || !artifactIds.has(item.artifact_id))
+    ) {
+      throw protocolError("terminal diagnostic references an undelivered artifact");
+    }
+  }
+  return diagnostics;
 }
 
 async function withSession<T>(
@@ -936,7 +982,7 @@ function safeLocator(value: unknown): string {
   return locator;
 }
 
-function isContainedPath(root: string, candidate: string): boolean {
+export function isContainedPath(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return (
     relative.length > 0 &&

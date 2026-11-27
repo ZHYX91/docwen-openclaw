@@ -1,23 +1,25 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   expectedBinaryName,
   runPackageAcceptance,
   validateDocWenPackageCandidate,
 } from "./run-docwen-package-acceptance.mjs";
+import * as releaseWork from "./release-work.mjs";
 import { makeCandidate } from "./testing/candidate-fixtures.mjs";
 
 const ownedDirectories = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(ownedDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -36,12 +38,22 @@ describe("plugin archive used by the acceptance wrapper", () => {
     ).rejects.toThrow("candidate_checksum_mismatch");
   });
 
-  it("loads the archived client into the real runner and isolates inherited profile selectors", async () => {
+  it("resolves declared runtime dependencies outside the checkout", async () => {
     // This is a wrapper test with an inert binary and a deliberately synthetic client,
     // not evidence that the actual DocWen product accepts this package.
     const environment = await candidateEnvironment();
     const root = dirname(environment.DOCWEN_TEST_BINARY);
     const plugin = join(root, "plugin");
+    const workspace = join(root, ".workspace");
+    const governedRepository = join(root, "repos", "plugin");
+    await mkdir(governedRepository, { recursive: true });
+    await mkdir(join(workspace, "temp"), { recursive: true });
+    await writeFile(
+      join(workspace, "workspace.json"),
+      JSON.stringify({ schema: "docwen.workspace.v1", repositories: ["repos/plugin"] }),
+    );
+    const createWork = releaseWork.createReleaseWork;
+    vi.spyOn(releaseWork, "createReleaseWork").mockImplementation(() => createWork(governedRepository));
     const marker = join(root, "archive-client.json");
     const source = [
       'import { Buffer } from "node:buffer";',
@@ -50,6 +62,7 @@ describe("plugin archive used by the acceptance wrapper", () => {
       'import { join } from "node:path";',
       'import process from "node:process";',
       'const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");',
+      'export async function runDocWenMachineQuery() { return { result: { capabilities: [{operation:"convert",input_shape:{slots:[{role:"source",media_types:["text/markdown"]}]}}] } }; }',
       "export async function runDocWenMachineTask({ request }) {",
       "  writeFileSync(process.env.ARCHIVE_CLIENT_TEST_MARKER, JSON.stringify({ module: import.meta.url, profile: process.env.DOCWEN_DATA_DIR, config: process.env.DOCWEN_CONFIG_DIR ?? null }));",
       '  const markdown = request.capability_id === "convert.docx.to_markdown";',
@@ -66,10 +79,19 @@ describe("plugin archive used by the acceptance wrapper", () => {
       '  return { progress: [{}], bundle: { artifacts: [{ kind: "document", media_type: markdown ? "text/markdown" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document", locator, absolutePath, size_bytes: bytes.length, sha256: hash(bytes) }] } };',
       "}",
     ].join("\n");
-    makeCandidate(plugin, {
-      contentsByPath: new Map([["dist/docwen/machine-client.js", Buffer.from(source)]]),
-    });
-    await runPackageAcceptance({
+    const contentsByPath = new Map([
+      ["dist/docwen/machine-client.js", Buffer.from(source)],
+      [
+        "dist/docwen/client.js",
+        Buffer.from(
+          'import {Check} from "typebox/schema"; import {createRequire} from "node:module"; const installed = createRequire(import.meta.url).resolve("typebox/schema"); if (!installed || !Check({type:"string"}, "text/markdown")) throw Error("invalid runtime dependency"); export const clientTesting = {inputMediaTypes:{".md":"text/markdown"},parseCapability: value => value};',
+        ),
+      ],
+    ]);
+    const undeclared = join(root, "undeclared");
+    makeCandidate(undeclared, { contentsByPath });
+    makeCandidate(plugin, { contentsByPath, packageOverrides: { dependencies: { typebox: "1.3.8" } } });
+    const runnerEnvironment = {
       ...process.env,
       ...environment,
       DOCWEN_PLUGIN_CANDIDATE_DIR: plugin,
@@ -77,9 +99,15 @@ describe("plugin archive used by the acceptance wrapper", () => {
       DOCWEN_DATA_DIR: join(root, "ambient-profile"),
       docwen_config_dir: join(root, "ambient-config"),
       DOCWEN_PLUGIN_D2_ROOT: join(root, "untrusted-client"),
-    });
+    };
+    await expect(
+      runPackageAcceptance({ ...runnerEnvironment, DOCWEN_PLUGIN_CANDIDATE_DIR: undeclared }),
+    ).rejects.toThrow("plugin_acceptance_runtime_dependencies_mismatch");
+    await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+    await runPackageAcceptance(runnerEnvironment);
     const observed = JSON.parse(await readFile(marker, "utf8"));
     const archivedModule = fileURLToPath(observed.module);
+    expect(archivedModule.startsWith(await realpath(join(workspace, "temp")))).toBe(true);
     expect(archivedModule.endsWith(join("plugin", "dist", "docwen", "machine-client.js"))).toBe(true);
     expect(observed.profile).not.toBe(join(root, "ambient-profile"));
     expect(observed.config).toBeNull();

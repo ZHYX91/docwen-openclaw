@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
@@ -127,7 +127,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
     };
 
     const committed = await atomicCommitBundle(bundle, output, false);
-    expect(await readFile(committed.value.preferredArtifactPath, "utf8")).toBe("# Result\n");
+    expect(await readFile(committed.value.preferredArtifactPath!, "utf8")).toBe("# Result\n");
     expect(await readFile(path.join(output, "report", "assets", "image.png"))).toEqual(image);
     expect(await readdir(output)).toEqual(["report"]);
     expect(committed.publication).toEqual({ state: "published", retry: "do_not_retry", warnings: [] });
@@ -159,6 +159,45 @@ describe("OpenClaw Artifact Bundle commit", () => {
     expect(await readFile(source, "utf8")).toBe("new");
   });
 
+  it.skipIf(process.platform !== "linux").each([0o700, 0o750, 0o755, 0o1777])(
+    "caps replacement directory access at the old mode %i and host creation permissions",
+    async (mode) => {
+      const workspace = await root();
+      const destination = path.join(workspace, "existing");
+      await mkdir(destination);
+      await chmod(destination, mode);
+      const bundle = await oneArtifactBundle(workspace, "replacement", "new");
+      const control = path.join(workspace, "fresh");
+      await atomicCommitBundle(bundle, control, false);
+      const defaultMode = (await lstat(control)).mode;
+      await atomicCommitBundle(bundle, destination, true);
+      expect((await lstat(destination)).mode & 0o7777).toBe((mode & defaultMode & 0o777) | (mode & 0o7000));
+      expect(await readFile(path.join(destination, "result.md"), "utf8")).toBe("new");
+    },
+  );
+
+  it.skipIf(process.platform !== "linux").each(["uid", "gid"] as const)(
+    "leaves the existing folder intact if a replacement would change its %s",
+    async (identity) => {
+      const workspace = await root();
+      const destination = path.join(workspace, "existing");
+      await mkdir(destination);
+      await writeFile(path.join(destination, "existing.md"), "original");
+      const snapshot = (await preflightOutputDirectory(destination, true))!;
+      const differentOwner = {
+        ...snapshot,
+        root: { ...snapshot.root, [identity]: snapshot.root[identity] + 1n },
+      };
+      const bundle = await oneArtifactBundle(workspace, "replacement", "new");
+      await expect(atomicCommitBundle(bundle, destination, true, {}, differentOwner)).rejects.toMatchObject({
+        code: "docwen_output_permissions_unsupported",
+        publication: { state: "not_published" },
+      });
+      expect(await readdir(destination)).toEqual(["existing.md"]);
+      expect(await readFile(path.join(destination, "existing.md"), "utf8")).toBe("original");
+    },
+  );
+
   it("keeps a committed Bundle when old-backup cleanup fails", async () => {
     const workspace = await root();
     const output = path.join(workspace, "replace-output");
@@ -172,7 +211,7 @@ describe("OpenClaw Artifact Bundle commit", () => {
       },
     });
 
-    expect(await readFile(committed.value.preferredArtifactPath, "utf8")).toBe("new");
+    expect(await readFile(committed.value.preferredArtifactPath!, "utf8")).toBe("new");
     expect(committed.publication).toMatchObject({
       state: "published",
       retry: "do_not_retry",
