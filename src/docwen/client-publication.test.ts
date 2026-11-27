@@ -16,10 +16,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import validReport from "../../contracts/docwen/fixtures/valid/proofread-report.empty.json" with { type: "json" };
 import obsoleteReport from "../../contracts/docwen/fixtures/invalid/proofread-report.old-version-field.json" with { type: "json" };
 import { executeDocWenTool } from "./client.js";
-import { DocWenMachineError, type MachineTaskCompleted } from "./machine-client.js";
+import { DocWenMachineError, validateArtifactBundle, type MachineTaskCompleted } from "./machine-client.js";
 import type * as MachineClientModule from "./machine-client.js";
 import type * as OutputTransactionModule from "./output-transaction.js";
 import * as publisher from "./publish-path.js";
+import peerBundle from "../../contracts/docwen/fixtures/valid/artifact-bundle.pdf-split.json" with { type: "json" };
 
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
@@ -405,6 +406,33 @@ describe("write tool publication results", () => {
     },
   );
 
+  const splitCapability = {
+    capability_id: "split.pdf.partition",
+    operation: "transform",
+    input_shape: {
+      slots: [
+        {
+          role: "source",
+          kind: "resource",
+          media_types: ["application/pdf"],
+          min_items: 1,
+          max_items: 1,
+        },
+      ],
+      undeclared_roles: "reject",
+    },
+    output_media_types: ["application/pdf"],
+    output_shape: {
+      cardinality: "many",
+      artifact_kinds: ["document"],
+      relation_types: [],
+      atomic_bundle: true,
+    },
+    options_schema: {},
+    availability: "available",
+    dependencies: [],
+    limitations: [],
+  };
   it("sends public PDF split inputs as resources before task planning", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "docwen-pdf-split-kind-"));
     roots.push(root);
@@ -412,33 +440,6 @@ describe("write tool publication results", () => {
     const outputDir = path.join(root, "split-output");
     await writeFile(file, Buffer.from("%PDF-1.4\n"));
 
-    const splitCapability = {
-      capability_id: "split.pdf.partition",
-      operation: "transform",
-      input_shape: {
-        slots: [
-          {
-            role: "source",
-            kind: "resource",
-            media_types: ["application/pdf"],
-            min_items: 1,
-            max_items: 1,
-          },
-        ],
-        undeclared_roles: "reject",
-      },
-      output_media_types: ["application/pdf"],
-      output_shape: {
-        cardinality: "many",
-        artifact_kinds: ["document"],
-        relation_types: [],
-        atomic_bundle: true,
-      },
-      options_schema: {},
-      availability: "available",
-      dependencies: [],
-      limitations: [],
-    };
     mocks.query.mockResolvedValue({ initialize: {}, result: { capabilities: [splitCapability] } });
     let plannedKind: unknown;
     mocks.task.mockImplementationOnce(async ({ request }) => {
@@ -451,6 +452,45 @@ describe("write tool publication results", () => {
     expect(plannedKind).toBe("resource");
     expect(result).toMatchObject({ status: "failed", error: { code: "probe_stop" } });
     await expect(readdir(outputDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("publishes both PDF peers when Core designates no preferred entry", async () => {
+    const directory = path.dirname(await input());
+    const file = path.join(directory, "source.pdf");
+    const outputDir = path.join(directory, "split");
+    await writeFile(file, "original");
+    mocks.query.mockResolvedValue({ result: { capabilities: [splitCapability] } });
+    mocks.task.mockImplementationOnce(async ({ request }) => {
+      const source = structuredClone(peerBundle);
+      const staging = request.output.staging_root.path;
+      for (const artifact of source.artifacts) {
+        const target = path.join(staging, artifact.locator);
+        const bytes = Buffer.from(artifact.artifact_id);
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, bytes);
+        artifact.sha256 = createHash("sha256").update(bytes).digest("hex");
+        artifact.size_bytes = bytes.length;
+      }
+      return {
+        taskId: source.task_id,
+        plan: { capability_id: request.capability_id },
+        diagnostics: [],
+        metrics: {},
+        progress: [],
+        bundle: await validateArtifactBundle(source, staging, source.task_id),
+      };
+    });
+    const result = await executeDocWenTool("docwen_split_pdf", { file, pages: "1,2", outputDir }, {});
+    const outputs = peerBundle.artifacts.map((artifact) => path.join(outputDir, artifact.logical_path));
+    expect(result).toMatchObject({
+      status: "success",
+      output: { preferred_artifact: null, artifacts: outputs },
+      bundle: { entries: peerBundle.entries },
+    });
+    expect(await Promise.all(outputs.map((output) => readFile(output, "utf8")))).toEqual(
+      peerBundle.artifacts.map((artifact) => artifact.artifact_id),
+    );
+    expect(await readFile(file, "utf8")).toBe("original");
   });
 
   it("honors cancellation immediately before commit and releases the transaction", async () => {

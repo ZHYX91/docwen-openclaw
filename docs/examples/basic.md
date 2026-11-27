@@ -66,6 +66,6 @@
 
 ## 找到结果
 
-成功后，`output.preferred_artifact` 是建议先打开的文件，`output.artifacts` 列出本次保存的全部文件。Markdown 引用的图片也在结果文件夹中，移动结果时应一起保留。
+成功后，`output.artifacts` 列出本次保存的全部文件。如果 DocWen 指定了首选文件，`output.preferred_artifact` 会给出它的路径。如果几个文件同等重要，且 DocWen 没有指定首选项，这个字段为 `null`。Markdown 引用的图片也在结果文件夹中，移动结果时应一起保留。
 
 如果返回 `status: "warning"` 且 `publication.state: "published"`，结果已经保存，按提示处理清理问题即可。如果返回 `unconfirmed`，先检查返回的恢复路径，不要直接重复转换或删除临时文件。

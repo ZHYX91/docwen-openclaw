@@ -390,7 +390,7 @@ async function validateMarkdown(
   const cleanup = newPublication();
   try {
     const preferred = preferredArtifact(execution.completed.bundle);
-    if (preferred.media_type !== JSON_MEDIA_TYPE || preferred.size_bytes > MAX_REPORT_BYTES) {
+    if (preferred?.media_type !== JSON_MEDIA_TYPE || preferred.size_bytes > MAX_REPORT_BYTES) {
       throw new DocWenMachineError(
         "docwen_validation_report_invalid",
         "DocWen returned an invalid validation report.",
@@ -674,7 +674,7 @@ async function numberMarkdown(
   );
   try {
     const preferred = preferredArtifact(execution.completed.bundle);
-    if (preferred.kind !== "document" || preferred.media_type !== MARKDOWN_MEDIA_TYPE) {
+    if (preferred?.kind !== "document" || preferred.media_type !== MARKDOWN_MEDIA_TYPE) {
       throw new DocWenMachineError(
         "docwen_bundle_shape_invalid",
         "Numbering did not return one preferred Markdown document.",
@@ -1211,7 +1211,7 @@ function taskResult(
   completed: MachineTaskCompleted,
   outputRoot: string,
   artifactPaths: string[],
-  preferredArtifactPath: string,
+  preferredArtifactPath: string | null,
   inPlace: boolean,
   publication: Publication,
 ): JsonObject {
