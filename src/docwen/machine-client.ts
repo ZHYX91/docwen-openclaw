@@ -936,7 +936,7 @@ function safeLocator(value: unknown): string {
   return locator;
 }
 
-function isContainedPath(root: string, candidate: string): boolean {
+export function isContainedPath(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return (
     relative.length > 0 &&

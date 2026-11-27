@@ -1,5 +1,5 @@
 import { constants as fsConstants } from "node:fs";
-import { chmod, copyFile, lstat, mkdir, mkdtemp, rename } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, realpath, rename } from "node:fs/promises";
 import * as path from "node:path";
 
 import { DocWenMachineError, type ValidatedArtifactBundle } from "./machine-client.js";
@@ -40,7 +40,7 @@ export async function preflightOutputDirectory(
   destination: string,
   overwrite: boolean,
   signal?: AbortSignal,
-): Promise<DirectorySnapshot | null> {
+): Promise<(DirectorySnapshot & { canonicalPath: string }) | null> {
   assertSafeDestination(destination);
   assertDirectoryPublicationSupported();
   let existing;
@@ -58,7 +58,10 @@ export async function preflightOutputDirectory(
       "Bundle output directory already exists; set overwrite=true explicitly.",
     );
   }
-  const snapshot = existing ? await captureDirectorySnapshot(destination, signal) : null;
+  const canonicalPath = existing ? await realpath(destination) : null;
+  const snapshot = canonicalPath
+    ? { ...(await captureDirectorySnapshot(canonicalPath, signal)), canonicalPath }
+    : null;
   await preflightPublication(destination, "directory", signal);
   return snapshot;
 }

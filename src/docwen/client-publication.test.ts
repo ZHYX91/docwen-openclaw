@@ -1,5 +1,15 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +22,7 @@ import * as publisher from "./publish-path.js";
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
   task: vi.fn(),
+  afterPreflight: vi.fn<() => Promise<void>>(),
   hooks: {} as {
     beforeSwap?: () => Promise<void>;
     afterBackupMove?: (backup: string) => Promise<void>;
@@ -49,6 +60,11 @@ vi.mock("./output-transaction.js", async (original) => {
   const actual = await original<typeof OutputTransactionModule>();
   return {
     ...actual,
+    preflightOutputDirectory: async (...args: Parameters<typeof actual.preflightOutputDirectory>) => {
+      const snapshot = await actual.preflightOutputDirectory(...args);
+      await mocks.afterPreflight();
+      return snapshot;
+    },
     atomicCommitBundle: (...args: Parameters<typeof actual.atomicCommitBundle>) => {
       const [bundle, destination, overwrite, hooks, initial] = args;
       return actual.atomicCommitBundle(bundle, destination, overwrite, { ...hooks, ...mocks.hooks }, initial);
@@ -83,6 +99,7 @@ const capability = {
 };
 beforeEach(() => {
   mocks.hooks = {};
+  mocks.afterPreflight.mockReset();
   mocks.query.mockReset().mockResolvedValue({ initialize: {}, result: { capabilities: [capability] } });
   mocks.task.mockReset().mockImplementation(async ({ request }): Promise<MachineTaskCompleted> => {
     const file = path.join(request.output.staging_root.path, "result.md");
@@ -128,10 +145,111 @@ async function input() {
   roots.push(root);
   const file = path.join(root, "source.md");
   await writeFile(file, "# Original\n");
-  return file;
+  // Windows TEMP can use an 8.3 path even when no junction is under test.
+  return realpath(file);
 }
 
 describe("write tool publication results", () => {
+  it.each(["source", "linked resource", "aliased input", "retargeted input"] as const)(
+    "rejects an overwrite containing the %s before planning",
+    async (mode) => {
+      const file = await input();
+      const root = path.dirname(file);
+      const output = path.join(root, "previous");
+      const assets = path.join(output, "assets");
+      await mkdir(assets, { recursive: true });
+      const asset = path.join(assets, "photo.png");
+      await writeFile(asset, "original image");
+      const alias = path.join(root, "images");
+      if (mode === "aliased input") await symlink(assets, alias, "junction");
+      if (mode === "retargeted input") {
+        await writeFile(path.join(root, "photo.png"), "outside image");
+        await symlink(root, alias, "junction");
+        mocks.afterPreflight.mockImplementationOnce(async () => {
+          await rename(alias, path.join(root, "old-images"));
+          await symlink(assets, alias, "junction");
+        });
+      }
+      const result =
+        mode === "source"
+          ? await executeDocWenTool(
+              "docwen_number_markdown",
+              { file, operation: "add", outputDir: root, overwrite: true },
+              {},
+            )
+          : await executeDocWenTool(
+              "docwen_convert",
+              {
+                inputs: [
+                  { file, kind: "document", role: "source", logicalPath: "report.md" },
+                  {
+                    file: mode === "linked resource" ? asset : path.join(alias, "photo.png"),
+                    kind: "resource",
+                    role: "linked_resource",
+                    logicalPath: "assets/photo.png",
+                  },
+                ],
+                to: "docx",
+                outputDir: output,
+                overwrite: true,
+              },
+              {},
+            );
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "docwen_output_contains_input" },
+        publication: { state: "not_published" },
+        diagnostic_summary: { recovery_action: "choose_new_output_directory" },
+      });
+      expect(mocks.query).not.toHaveBeenCalled();
+      expect(await readFile(file, "utf8")).toBe("# Original\n");
+      expect(await readFile(asset, "utf8")).toBe("original image");
+    },
+  );
+
+  it.each(["stable", "retargeted"] as const)(
+    "binds in-place numbering to the prepared input through a %s directory alias",
+    async (mode) => {
+      const root = path.dirname(await input());
+      const original = path.join(root, "first");
+      const unrelated = path.join(root, "second");
+      const alias = path.join(root, "active");
+      const relative = path.join("notes", "copy.md");
+      for (const folder of [original, unrelated]) {
+        await mkdir(path.join(folder, "notes"), { recursive: true });
+        await writeFile(path.join(folder, relative), "# Identical text\n");
+      }
+      await symlink(original, alias, "junction");
+      const originalFile = await realpath(path.join(original, relative));
+      const task = mocks.task.getMockImplementation()!;
+      mocks.task.mockImplementationOnce(async (options) => {
+        expect(options.request.inputs[0].locator.path).toBe(originalFile);
+        if (mode === "retargeted") {
+          await rm(alias);
+          await symlink(unrelated, alias, "junction");
+        }
+        return task(options);
+      });
+      const result = await executeDocWenTool(
+        "docwen_number_markdown",
+        { file: path.join(alias, relative), operation: "add", inPlace: true },
+        {},
+      );
+      if (mode === "retargeted") {
+        expect(result).toMatchObject({
+          status: "failed",
+          error: { code: "docwen_source_changed" },
+          publication: { state: "not_published" },
+        });
+        expect(await readFile(originalFile, "utf8")).toBe("# Identical text\n");
+      } else {
+        expect(result).toMatchObject({ status: "success", output: { preferred_artifact: originalFile } });
+        expect(await readFile(originalFile, "utf8")).toBe("# 1. Result\n");
+      }
+      expect(await readFile(path.join(unrelated, relative), "utf8")).toBe("# Identical text\n");
+    },
+  );
+
   it.each([false, true])(
     "checks output filesystem before starting conversion (inPlace=%s)",
     async (inPlace) => {
@@ -222,6 +340,7 @@ describe("write tool publication results", () => {
     expect(await readdir(path.dirname(file))).toEqual(["source.md"]);
     expect(mocks.task).toHaveBeenCalledTimes(1);
     mocks.hooks = {};
+    mocks.afterPreflight.mockReset();
     expect(
       await executeDocWenTool("docwen_number_markdown", { file, operation: "add", inPlace: true }, {}),
     ).toMatchObject({ status: "success" });

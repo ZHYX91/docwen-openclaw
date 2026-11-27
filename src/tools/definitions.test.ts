@@ -85,9 +85,10 @@ describe("tool definitions", () => {
     const splitPdf = definitions.find(({ name }) => name === "docwen_split_pdf") as unknown as {
       parameters: { properties: { outputDir: { description?: string } } };
     };
-    expect(splitPdf.parameters.properties.outputDir.description).toBe(
-      "Full path to the output folder on the Gateway computer. All generated files are saved together here.",
-    );
+    const guidance = splitPdf.parameters.properties.outputDir.description;
+    expect(guidance).toContain("Full path to the output folder on the Gateway computer");
+    expect(guidance).toContain("contains none of the input files");
+    expect(guidance).toContain("All generated files are saved together");
 
     const signal = new AbortController().signal;
     const params = { file: "C:\\input.docx" };

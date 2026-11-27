@@ -6,6 +6,7 @@ import type { DocWenPluginConfig } from "../config.js";
 import { WRITE_TOOL_NAMES } from "../tools/catalog.js";
 import {
   DocWenMachineError,
+  isContainedPath,
   type JsonObject,
   type MachineCapability,
   type MachineInputHandle,
@@ -572,10 +573,11 @@ async function numberMarkdown(
     );
   }
   const preparedInputs = await buildInputHandles([input], signal);
+  const source = preparedInputs[0]!;
   await preflightPublication(file, "file", signal);
   const sourceVersion = {
-    sizeBytes: preparedInputs[0]!.size_bytes,
-    sha256: preparedInputs[0]!.sha256,
+    sizeBytes: source.size_bytes,
+    sha256: source.sha256,
   };
   const execution = await executeTask(
     binaryPath,
@@ -594,8 +596,11 @@ async function numberMarkdown(
         "Numbering did not return one preferred Markdown document.",
       );
     }
+    if ((await realpath(file)) !== source.locator.path) {
+      throw new DocWenMachineError("docwen_source_changed", "The input path now points to a different file.");
+    }
     const committed = await atomicReplaceFile(
-      file,
+      source.locator.path,
       preferred.absolutePath,
       {
         sizeBytes: preferred.size_bytes,
@@ -628,11 +633,15 @@ async function persistentTask(
   params: Params,
   config: DocWenPluginConfig,
   signal?: AbortSignal,
-  preparedInputs?: MachineInputHandle[],
 ): Promise<JsonObject> {
   const outputDir = requiredAbsolutePath(params, "outputDir");
   const overwrite = optionalBoolean(params, "overwrite") ?? false;
   const initialDestination = await preflightOutputDirectory(outputDir, overwrite, signal);
+  const preparedInputs = await buildInputHandles(
+    inputs,
+    signal,
+    initialDestination ? { requested: outputDir, canonical: initialDestination.canonicalPath } : undefined,
+  );
   const execution = await executeTask(binaryPath, selection, inputs, options, config, signal, preparedInputs);
   try {
     const committed = await atomicCommitBundle(
@@ -908,6 +917,7 @@ function capabilityAcceptsInputs(
 async function buildInputHandles(
   inputSpecs: readonly InputSpec[],
   signal?: AbortSignal,
+  replacedDirectory?: { requested: string; canonical: string },
 ): Promise<MachineInputHandle[]> {
   signal?.throwIfAborted();
   if (inputSpecs.length === 0)
@@ -931,6 +941,16 @@ async function buildInputHandles(
       throw new DocWenMachineError("docwen_input_not_regular_file", `Input is not a regular file: ${file}`);
     }
     const canonicalPath = await realpath(file);
+    if (
+      replacedDirectory &&
+      (isContainedPath(replacedDirectory.requested, file) ||
+        isContainedPath(replacedDirectory.canonical, canonicalPath))
+    ) {
+      throw new DocWenMachineError(
+        "docwen_output_contains_input",
+        "The output folder contains an input file. Choose a separate folder to preserve the original.",
+      );
+    }
     const key = process.platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
     if (canonicalPaths.has(key))
       throw new DocWenMachineError("docwen_duplicate_input", `Duplicate input: ${file}`);

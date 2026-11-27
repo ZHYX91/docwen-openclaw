@@ -34,7 +34,7 @@ The plugin starts a local DocWen process for each request. Read-only checks do n
 
 ## Tool write behavior
 
-The write tools use `outputDir` as the transaction target. If it already exists, the call fails unless the caller explicitly sets `overwrite=true`. A local IPC lock rejects concurrent writers, the destination observed before conversion is rechecked immediately before the swap, and every copied artifact is revalidated. The committed directory contains exactly the Bundle's logical artifact paths. Hashes, entries and relations remain in the structured result; no hidden manifest is added.
+The write tools use `outputDir` as the transaction target. If it already exists, the call fails unless the caller explicitly sets `overwrite=true`. Choose a separate destination when overwriting. The plugin rejects an output folder that contains an input, including a linked resource. A local IPC lock rejects concurrent writers, the destination observed before conversion is rechecked immediately before the swap, and every copied artifact is revalidated. The committed directory contains exactly the Bundle's logical artifact paths. Hashes, entries and relations remain in the structured result; no hidden manifest is added.
 
 Publication and rollback never replace a newly appearing target. Windows uses native directory rename semantics; Linux x64 uses the included minimal Node-API component for `renameat2(RENAME_NOREPLACE)`. Files use an exclusive hard link on both systems. Unsupported filesystems fail explicitly. See [the component's source and build instructions](../native/README.md).
 
@@ -54,7 +54,7 @@ The separate `convert.markdown.to_docx` capability is for integrations that alre
 
 `docwen_convert` accepts an optional `optimization` resource ID. It selects a unique available transform capability whose `optimization_id`, typed input shape, and output media type match the request. A resource listing alone does not make an optimizer executable. Legacy Word inputs also require an available preconversion chain; an unavailable or ambiguous optimization fails without reverting to ordinary conversion. Options must satisfy the selected capability's contract.
 
-`docwen_number_markdown` is the sole exception: it requires exactly one of an `outputDir` or `inPlace=true`. In-place replacement is performed only after the returned artifact has passed path, graph, size, and SHA-256 validation.
+`docwen_number_markdown` is the sole exception: it requires exactly one of an `outputDir` or `inPlace=true`. After verifying the returned Markdown, the plugin replaces the canonical source path passed to Machine and reports that path. If the requested path resolves to a different file before publication, the task fails with `docwen_source_changed`.
 
 ## Testing and package acceptance
 
