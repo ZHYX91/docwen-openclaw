@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, writeFileSync, symlinkSync } from "node:fs";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -39,6 +40,53 @@ describe("release work ownership", () => {
     expect(existsSync(join(repo, "build"))).toBe(false);
     finishReleaseWork(work, true);
     expect(existsSync(work.root)).toBe(false);
+  });
+
+  it("routes failures to the registered runtime and gives it precedence over the legacy root", async () => {
+    const { repo, workspace } = await governed();
+    const runtime = join(dirname(workspace), "runtime");
+    await mkdir(join(runtime, "temp"), { recursive: true });
+    const registry = join(runtime, "workspace.json");
+    writeFileSync(
+      registry,
+      JSON.stringify({ schema: "docwen.workspace.v2", repositories: ["repos/plugin"] }),
+    );
+    const work = createReleaseWork(repo);
+    expect(dirname(work.root)).toBe(realpathSync.native(join(runtime, "temp")));
+    finishReleaseWork(work, false);
+    expect(JSON.parse(readFileSync(join(work.root, ".docwen-temp-lease.json"), "utf8")).state).toBe(
+      "retained-failure",
+    );
+    writeFileSync(
+      registry,
+      JSON.stringify({ schema: "docwen.workspace.v1", repositories: ["repos/plugin"] }),
+    );
+    expect(() => createReleaseWork(repo)).toThrow("release_work_registry_invalid");
+    expect(existsSync(join(repo, "build"))).toBe(false);
+  });
+
+  it("uses the registered temp directory from a linked checkout", async () => {
+    const { repo, workspace } = await governed();
+    const git = (...args) => execFileSync("git", ["-C", repo, ...args], { stdio: "pipe" });
+    git("init");
+    git(
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "source",
+    );
+    const checkout = join(dirname(workspace), "linked-checkout");
+    git("worktree", "add", "--detach", checkout);
+    const work = createReleaseWork(checkout);
+    expect(dirname(work.root)).toBe(realpathSync.native(join(workspace, "temp")));
+    expect(existsSync(join(checkout, "build"))).toBe(false);
+    finishReleaseWork(work, true);
   });
 
   it.each([
