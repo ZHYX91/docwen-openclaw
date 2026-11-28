@@ -4,7 +4,7 @@ Packaged Machine acceptance compares the archive's runtime dependencies with the
 
 ## Release assets
 
-Maintainers can create a local package in an explicit directory outside the repository; the command compiles once in an owned temporary directory, runs actual `npm pack`, verifies the complete archive, and writes a stable checksum manifest. Successful work is removed; failed work retains a process-bound lease under the workspace temp directory (or `build` in a standalone clone). CI and release share `check:source` and then this single package build. Build artifacts transfer by exact ID with digest mismatch rejection; reproducibility comparisons are optional engineering checks.
+Maintainers can create a local package in an explicit directory outside the repository; the command compiles once in an owned temporary directory, runs actual `npm pack`, verifies the complete archive, and writes a stable checksum manifest. Successful work is removed. Failed work retains a process-bound lease in the registered workspace's `runtime/temp` or legacy `.workspace/temp`, including when invoked from a linked checkout. Standalone clones use their own `build` directory. CI and release share `check:source` and then this single package build. Build artifacts transfer by exact ID with digest mismatch rejection; reproducibility comparisons are optional engineering checks.
 
 ```bash
 npm run release:build -- /absolute/path/to/new-output-directory

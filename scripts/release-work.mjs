@@ -48,20 +48,15 @@ function processIdentity() {
   return `windows-filetime:${identity}`;
 }
 
-function governedParent(repo) {
+function governedParent(repo, workspace, schema) {
   const engineeringRoot = dirname(dirname(repo));
-  const workspace = join(engineeringRoot, ".workspace");
   const registry = join(workspace, "workspace.json");
   plainPath(registry);
   if (!lstatSync(workspace).isDirectory() || !lstatSync(registry).isFile()) {
     throw new Error("release_work_workspace_missing");
   }
   const record = JSON.parse(readFileSync(registry, "utf8"));
-  if (
-    record?.schema !== "docwen.workspace.v1" ||
-    !Array.isArray(record.repositories) ||
-    record.repositories.length === 0
-  ) {
+  if (record?.schema !== schema || !Array.isArray(record.repositories) || record.repositories.length === 0) {
     throw new Error("release_work_registry_invalid");
   }
   const canonical = (value) => (process.platform === "win32" ? value.toLowerCase() : value);
@@ -74,7 +69,7 @@ function governedParent(repo) {
       entry.includes("\\") ||
       entry.includes(":") ||
       entry.split("/").some((part) => !part || part === "." || part === "..") ||
-      entry.split("/")[0].toLowerCase() === ".workspace"
+      [".workspace", "runtime"].includes(entry.split("/")[0].toLowerCase())
     ) {
       throw new Error("release_work_registered_path_invalid");
     }
@@ -90,20 +85,51 @@ function governedParent(repo) {
   return parent;
 }
 
+function registeredCheckout(repo) {
+  if (basename(dirname(repo)).toLowerCase() === "repos") return repo;
+  const marker = join(repo, ".git");
+  plainPath(marker);
+  try {
+    if (!lstatSync(marker).isFile()) return repo;
+  } catch (error) {
+    if (error?.code === "ENOENT") return repo;
+    throw error;
+  }
+  const result = spawnSync("git", ["-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    encoding: "utf8",
+    timeout: 10000,
+    windowsHide: true,
+  });
+  if (result.status !== 0) throw new Error("release_work_git_identity_unavailable");
+  const common = resolve(result.stdout.trim());
+  plainPath(common);
+  const checkout = dirname(common);
+  return basename(common) === ".git" && basename(dirname(checkout)).toLowerCase() === "repos"
+    ? checkout
+    : repo;
+}
+
 export function createReleaseWork(repoRoot) {
   const repo = resolve(repoRoot);
   plainPath(repo);
   if (!lstatSync(repo).isDirectory()) throw new Error("release_work_repository_missing");
   let parent = join(repo, "build");
-  if (basename(dirname(repo)).toLowerCase() === "repos") {
-    let hasWorkspace = false;
-    try {
-      lstatSync(join(dirname(dirname(repo)), ".workspace"));
-      hasWorkspace = true;
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
+  const checkout = registeredCheckout(repo);
+  if (basename(dirname(checkout)).toLowerCase() === "repos") {
+    for (const [directory, schema] of [
+      ["runtime", "docwen.workspace.v2"],
+      [".workspace", "docwen.workspace.v1"],
+    ]) {
+      const workspace = join(dirname(dirname(checkout)), directory);
+      try {
+        lstatSync(workspace);
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+        continue;
+      }
+      parent = governedParent(checkout, workspace, schema);
+      break;
     }
-    if (hasWorkspace) parent = governedParent(repo);
   }
   plainPath(parent);
   mkdirSync(parent, { recursive: true });
